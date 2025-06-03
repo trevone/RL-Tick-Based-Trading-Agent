@@ -7,9 +7,8 @@ import traceback
 import json
 import hashlib
 from datetime import datetime, timezone, timedelta
-import time
-from tqdm.auto import tqdm # Import tqdm for general progress bars
-import talib 
+import time # Ensure time module is imported
+from typing import Union
 
 try:
     from binance.client import Client
@@ -19,6 +18,10 @@ except ImportError:
     BINANCE_CLIENT_AVAILABLE = False
     print("CRITICAL ERROR: python-binance library not found. This project now exclusively uses Binance for data. "
           "Please install with 'pip install python-binance' for the scripts to function.")
+
+# --- NEW: Data Cache Directory ---
+# Consistent with check_tick_cache.py
+DATA_CACHE_DIR = "./binance_data_cache/"
 
 def load_config(config_path="config.yaml"):
     if not os.path.exists(config_path):
@@ -179,6 +182,9 @@ def fetch_and_cache_kline_data(
     cache_file_type: str = "parquet", log_level: str = "normal",
     api_request_delay_seconds: float = 0.2
 ) -> pd.DataFrame:
+    """
+    Fetches and caches Binance K-line (OHLCV) data, optionally adding technical indicators.
+    """
     if not BINANCE_CLIENT_AVAILABLE:
         print("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
         return pd.DataFrame()
@@ -186,8 +192,9 @@ def fetch_and_cache_kline_data(
     price_features_to_add = price_features_to_add if price_features_to_add is not None else []
     os.makedirs(cache_dir, exist_ok=True)
 
-    # Removed sorted_features_str from cache_specifier for concise filenames
-    cache_specifier = f"bn_klines_{symbol}_{interval}_{start_date_str}_to_{end_date_str}" 
+    # Sort features to ensure consistent filename for caching
+    sorted_features_str = "_".join(sorted([f.lower().replace('_','') for f in price_features_to_add]))
+    cache_specifier = f"bn_klines_{symbol}_{interval}_{start_date_str}_to_{end_date_str}_{sorted_features_str}"
     
     safe_filename = "".join([c if c.isalnum() or c in ['_', '-'] else '_' for c in cache_specifier])
     cache_file = os.path.join(cache_dir, f"{safe_filename}.{cache_file_type}")
@@ -198,7 +205,6 @@ def fetch_and_cache_kline_data(
             df = pd.read_parquet(cache_file) if cache_file_type == "parquet" else pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if df.index.tz is None and not df.empty: df.index = df.index.tz_localize('UTC')
             # Check if columns are consistent, if not, refetch (e.g., if TA features changed)
-            # This check is still necessary to ensure cached data matches requested features
             if not all(f in df.columns for f in price_features_to_add if f not in ['Open', 'High', 'Low', 'Close', 'Volume']):
                 print(f"Warning: Cached K-line data missing some requested TA features. Refetching: {cache_file}")
                 os.remove(cache_file) # Delete incomplete cache
@@ -211,16 +217,14 @@ def fetch_and_cache_kline_data(
 
     if log_level in ["normal", "detailed"]:
         print(f"Fetching K-line data for {symbol}, Interval: {interval}, From: {start_date_str}, To: {end_date_str}")
-    
+
     client = Client(api_key or os.environ.get('BINANCE_API_KEY'), 
                     api_secret or os.environ.get('BINANCE_API_SECRET'), 
                     testnet=testnet)
     if testnet: client.API_URL = 'https://testnet.binance.vision/api'
 
     try:
-        # Removed BarSpinner as it caused ModuleNotFoundError; basic print is sufficient for single call
         klines_raw = client.get_historical_klines(symbol, interval, start_date_str, end_str=end_date_str)
-
         if not klines_raw:
             if log_level != "none": print(f"No k-lines returned for {symbol} {start_date_str}-{end_date_str}.")
             return pd.DataFrame()
@@ -263,20 +267,25 @@ def fetch_continuous_aggregate_trades(
     testnet: bool = False, cache_file_type: str = "parquet", log_level: str = "normal",
     api_request_delay_seconds: float = 0.2
 ) -> pd.DataFrame:
+    """
+    Fetches and caches continuous aggregate trade data for a given symbol and date range.
+    Returns the DataFrame if data is fetched, an empty DataFrame if no data, or raises an exception on error.
+    """
     if not BINANCE_CLIENT_AVAILABLE:
         print("CRITICAL ERROR in fetch_continuous_aggregate_trades: python-binance library not found.")
         return pd.DataFrame()
 
     os.makedirs(cache_dir, exist_ok=True)
     
-    # Updated cache specifier to include full timestamps to ensure unique naming for precise ranges
+    # Filename adjustment to match check_tick_cache.py's expected pattern:
+    # bn_aggtrades_SYMBOL_YYYY-MM-DD_to_YYYY-MM-DD.parquet
     start_dt_for_filename = pd.to_datetime(start_date_str, utc=True)
     end_dt_for_filename = pd.to_datetime(end_date_str, utc=True)
     
-    start_filename_str = start_dt_for_filename.strftime("%Y-%m-%d_%H-%M-%S")
-    end_filename_str = end_dt_for_filename.strftime("%Y-%m-%d_%H-%M-%S")
+    filename_start_date_part = start_dt_for_filename.strftime("%Y-%m-%d")
+    filename_end_date_part = end_dt_for_filename.strftime("%Y-%m-%d")
 
-    cache_specifier = f"bn_aggtrades_{symbol}_{start_filename_str}_to_{end_filename_str}"
+    cache_specifier = f"bn_aggtrades_{symbol}_{filename_start_date_part}_to_{filename_end_date_part}"
     safe_filename = "".join([c if c.isalnum() or c in ['_', '-'] else '_' for c in cache_specifier])
     cache_file = os.path.join(cache_dir, f"{safe_filename}.{cache_file_type}")
 
@@ -303,27 +312,15 @@ def fetch_continuous_aggregate_trades(
     start_dt = pd.to_datetime(start_date_str, utc=True)
     end_dt = pd.to_datetime(end_date_str, utc=True)
     
-    initial_start_ms = int(start_dt.timestamp() * 1000)
-    current_start_ms = initial_start_ms
+    current_start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
-
-    total_duration_ms = end_ms - initial_start_ms
-    if total_duration_ms <= 0:
-        if log_level != "none": print(f"Invalid or zero duration date range: {start_date_str} to {end_date_str}")
-        return pd.DataFrame()
-
-    pbar = None
-    if log_level in ["normal", "detailed"]:
-        # Total is the full duration of the fetch period in milliseconds
-        pbar = tqdm(total=total_duration_ms, desc=f"Fetching {symbol} trades", unit="ms", unit_scale=True, disable=(log_level == "none"), leave=False)
-
 
     while True:
         try:
             if log_level == "detailed":
                 print(f"  Fetching agg trades. Current start_ms: {current_start_ms}")
 
-            chunk_end_ms = min(current_start_ms + (60*60*1000 -1) , end_ms)
+            chunk_end_ms = min(current_start_ms + (60*60*1000 - 1) , end_ms)
 
             if log_level == "detailed": print(f"    Fetching chunk: Start {current_start_ms}, End {chunk_end_ms}")
 
@@ -345,32 +342,23 @@ def fetch_continuous_aggregate_trades(
                 else:
                     break
 
-            if pbar:
-                # Calculate current progress in milliseconds
-                current_pbar_pos = current_start_ms - initial_start_ms
-                pbar.n = min(current_pbar_pos, total_duration_ms) # Ensure current position doesn't exceed total
-                pbar.set_postfix_str(f"Trades: {len(all_trades)}")
-                pbar.refresh()
-
             if current_start_ms >= end_ms:
-                if pbar: pbar.close() # Close progress bar when done
                 break
             
             time.sleep(api_request_delay_seconds)
 
         except BinanceAPIException as bae:
-            if pbar: pbar.close() # Close pbar on error
             print(f"Binance API Exception during aggregate trade fetch: {bae.code} - {bae.message}. Retrying or stopping...")
             time.sleep(api_request_delay_seconds * 5)
             break 
         except Exception as e:
-            if pbar: pbar.close() # Close pbar on error
             print(f"Error fetching aggregate trades: {e}")
             traceback.print_exc()
             break
 
     if not all_trades:
         if log_level != "none": print(f"No aggregate trades returned for {symbol} {start_date_str}-{end_date_str}.")
+        # IMPORTANT: Return empty DataFrame immediately, do not attempt to save an empty DataFrame
         return pd.DataFrame()
 
     df_trades = pd.DataFrame(all_trades)
@@ -381,14 +369,121 @@ def fetch_continuous_aggregate_trades(
     
     df_trades_final = df_trades[['Price', 'Quantity', 'IsBuyerMaker']].copy()
 
-    if not df_trades_final.empty:
+    if not df_trades_final.empty: # Only save if DataFrame is not empty
         try:
             if cache_file_type == "parquet": df_trades_final.to_parquet(cache_file)
             else: df_trades_final.to_csv(cache_file)
             if log_level in ["normal", "detailed"]: print(f"Aggregate trades saved to cache: {cache_file}")
+            time.sleep(0.1) # ADDED: Small delay after saving to allow file system to sync
         except Exception as e: print(f"Error saving aggregate trades to cache {cache_file}: {e}")
+    else:
+        # This case should ideally be caught by 'if not all_trades:' above, but for robustness
+        if log_level != "none": print(f"DataFrame is empty, not saving to cache: {cache_file}")
             
     return df_trades_final
+
+# --- UPDATED: Helper for file paths for daily data ---
+def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades", cache_dir: str = DATA_CACHE_DIR) -> str:
+    """
+    Generates the expected file path for a single day's data (e.g., aggregate trades).
+    This now matches the actual saving location (directly in cache_dir, not in symbol subdirectory).
+    """
+    # No need to create a symbol_dir here, as fetch_continuous_aggregate_trades saves directly to cache_dir
+    # However, ensure the base cache_dir exists
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Filename matches the pattern expected by check_tick_cache.py for single-day files
+    # The discrepancy was here: data_type was "agg_trades" causing "bn_agg_trades"
+    # We explicitly set it to "bn_aggtrades" to match the saving side.
+    filename_prefix = "bn_aggtrades" # Corrected: Hardcode to match actual saving format
+    safe_filename = f"{filename_prefix}_{symbol}_{date_str}_to_{date_str}.parquet"
+    
+    return os.path.join(cache_dir, safe_filename) # Corrected: join directly to cache_dir
+
+
+# --- NEW: Function to fetch and cache data for a single day (used by data_downloader_manager.py) ---
+def fetch_and_cache_tick_data(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR) -> Union[pd.DataFrame, None]:
+    """
+    Wrapper to fetch and cache aggregate trade data for a specific date range.
+    This function is intended to be called by the new data_downloader_manager.py for daily fetching.
+    It calls fetch_continuous_aggregate_trades.
+    Returns the DataFrame if data was fetched and saved, otherwise None.
+    """
+    df = fetch_continuous_aggregate_trades(
+        symbol=symbol,
+        start_date_str=start_date_str,
+        end_date_str=end_date_str,
+        cache_dir=cache_dir,
+        api_key=None, # Will use environment variables or config
+        api_secret=None,
+        testnet=False, # Use False for production, or pass from config
+        log_level="normal",
+        api_request_delay_seconds=0.2
+    )
+    # Return the DataFrame if it's not empty, otherwise None
+    return df if not df.empty else None
+
+# --- NEW: Function to load data for training, checking for missing days ---
+def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR) -> pd.DataFrame:
+    """
+    Loads tick data (aggregate trades) for a given symbol and date range.
+    Checks for and fetches any missing days within the range for training purposes.
+    """
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+    all_data_frames = []
+    current_date = start_date
+    while current_date <= end_date:
+        date_str = current_date.strftime('%Y-%m-%d')
+        # Use the data_type="agg_trades" consistently
+        # This will now get the correct path directly in DATA_CACHE_DIR
+        file_path = get_data_path_for_day(date_str, symbol, data_type="agg_trades", cache_dir=cache_dir)
+
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0: # Check if exists OR is empty
+            print(f"Missing or empty data for {symbol} on {date_str}. Attempting to fetch and cache.")
+            try:
+                # Construct precise start and end datetime strings for the current day for API call
+                day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
+                day_end_dt_utc = datetime.combine(current_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) - timedelta(microseconds=1)
+                start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+                end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+                # Call the daily fetcher for the missing day. It returns DataFrame or None.
+                df_fetched_daily = fetch_and_cache_tick_data(symbol, start_datetime_str_for_api, end_datetime_str_for_api, cache_dir=cache_dir)
+                
+                if df_fetched_daily is None or df_fetched_daily.empty:
+                    print(f"No data was fetched for {symbol} on {date_str}. Skipping this day.")
+                    current_date += timedelta(days=1)
+                    continue # Skip to the next day if no data was fetched
+            except Exception as e:
+                print(f"Could not fetch missing data for {symbol} on {date_str}: {e}. Skipping this day.")
+                current_date += timedelta(days=1)
+                continue # Skip to the next day if fetching fails
+
+        try:
+            df = pd.read_parquet(file_path)
+            if not df.empty:
+                all_data_frames.append(df)
+            else:
+                print(f"File {file_path} is empty after re-check. Skipping this day.")
+        except Exception as e:
+            print(f"Error loading data from {file_path}: {e}. Skipping this day.")
+
+        current_date += timedelta(days=1)
+
+    if not all_data_frames:
+        print(f"No data found or loaded for {symbol} in the range {start_date_str} to {end_date_str}.")
+        return pd.DataFrame() # Return empty DataFrame if no data was loaded
+
+    # Concatenate all daily dataframes and sort by timestamp
+    combined_df = pd.concat(all_data_frames)
+    combined_df = combined_df.sort_index() # Sort by the Timestamp index
+    
+    # Ensure no duplicate timestamps after concatenation (shouldn't happen with daily files)
+    combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+
+    return combined_df
 
 
 def merge_configs(default_config: dict, loaded_config: dict, section_name: str = "") -> dict:
@@ -479,7 +574,7 @@ def resolve_model_path(eval_specific_config: dict, full_yaml_config: dict, train
     relevant_config_for_hash = get_relevant_config_for_hash(full_yaml_config, temp_effective_config_for_hash, env_script_fallback_config)
 
     train_log_dir_base = temp_effective_config_for_hash.get("run_settings", {}).get("log_dir_base")
-    train_base_model_name = temp_effective_config_for_hash.get("run_settings", {}).get("model_name")
+    train_base_model_name = temp_effective_config_for_hash.get("run_settings", {}).get("model_name") # Corrected: use model_name
 
     if train_log_dir_base and train_base_model_name:
         if not relevant_config_for_hash and log_level != "none": print("Warning: Cannot auto-find model, relevant config for hash is empty.")
@@ -523,7 +618,7 @@ if __name__ == '__main__':
         "binance_settings": {
             "default_symbol": "BTCUSDT",
             "historical_interval": "1h",
-            "historical_cache_dir": "./binance_data_cache_test_utils/",
+            "historical_cache_dir": "./binance_data_cache/", # Use the global DATA_CACHE_DIR
             "api_key": os.environ.get("BINANCE_API_KEY"),
             "api_secret": os.environ.get("BINANCE_API_SECRET"),
             "testnet": True,
@@ -565,7 +660,7 @@ if __name__ == '__main__':
         else:
             print("K-line fetch FAILED or returned empty DataFrame.")
 
-        print("\n--- Testing fetch_continuous_aggregate_trades ---")
+        print("\n--- Testing fetch_continuous_aggregate_trades (original function) ---")
         tick_start = test_config_merged.get("start_date_tick_test", "2024-04-01 10:00:00")
         tick_end = test_config_merged.get("end_date_tick_test", "2024-04-01 10:05:00")
         
@@ -586,8 +681,54 @@ if __name__ == '__main__':
             print(f"Aggregate trades fetch successful. Shape: {agg_trades_df.shape}, Columns: {agg_trades_df.columns.tolist()}")
             print("Agg Trades Head:\n", agg_trades_df.head())
         else:
-            print("Agg Trades fetch FAILED or returned empty DataFrame.")
-            print("Note: For aggregate trades, ensure the test period has trading activity on Binance Testnet (if used) or Mainnet.")
+            print("Aggregate trades fetch FAILED or returned empty DataFrame.")
+            print("Note: For aggregate trades, ensure the test period has trading activity on Binance Testnet (if used) or Mainnet.)")
+
+        # --- Testing NEW fetch_and_cache_tick_data (daily wrapper) ---
+        print("\n--- Testing NEW fetch_and_cache_tick_data (daily wrapper) ---")
+        daily_test_date = "2024-04-03"
+        print(f"Attempting to fetch and cache data for {daily_test_date} using the daily wrapper...")
+        try:
+            # Construct precise start and end datetime strings for the current day for API call
+            test_day_dt = datetime.strptime(daily_test_date, '%Y-%m-%d').date()
+            test_day_start_dt_utc = datetime.combine(test_day_dt, datetime.min.time(), tzinfo=timezone.utc)
+            test_day_end_dt_utc = datetime.combine(test_day_dt + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) - timedelta(microseconds=1)
+            test_start_datetime_str_for_api = test_day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+            test_end_datetime_str_for_api = test_day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+            # This calls fetch_continuous_aggregate_trades internally
+            fetched_daily_df = fetch_and_cache_tick_data( # Capture return value
+                symbol=bn_settings_test.get("default_symbol"),
+                start_date_str=test_start_datetime_str_for_api,
+                end_date_str=test_end_datetime_str_for_api, # For a single day
+                cache_dir=DATA_CACHE_DIR # Use the global cache dir
+            )
+            if fetched_daily_df is not None and not fetched_daily_df.empty:
+                # Use the corrected get_data_path_for_day to confirm file location
+                print(f"Daily fetch and cache for {daily_test_date} complete. Check {get_data_path_for_day(daily_test_date, bn_settings_test.get('default_symbol'))}")
+            else:
+                print(f"Daily fetch and cache for {daily_test_date} completed but no data was fetched or DataFrame is empty.")
+        except Exception as e:
+            print(f"Daily fetch and cache for {daily_test_date} FAILED: {e}")
+
+        # --- Testing NEW load_tick_data_for_range ---
+        print("\n--- Testing NEW load_tick_data_for_range ---")
+        range_start = "2024-04-01"
+        range_end = "2024-04-03" # Include the day we just (potentially) downloaded
+        print(f"Attempting to load data for range {range_start} to {range_end}...")
+        range_df = load_tick_data_for_range(
+            symbol=bn_settings_test.get("default_symbol"),
+            start_date_str=range_start,
+            end_date_str=range_end,
+            cache_dir=DATA_CACHE_DIR
+        )
+        if not range_df.empty:
+            print(f"Range load successful. Shape: {range_df.shape}")
+            print("Range Data Head:\n", range_df.head())
+            print("Range Data Tail:\n", range_df.tail())
+        else:
+            print("Range load FAILED or returned empty DataFrame.")
+
 
     else:
         print("Skipped Binance data fetching tests as python-binance library is not available.")
