@@ -1,2 +1,5 @@
 .env
 config.yaml
+logs/
+binance_data_cache/
+__pycache__
