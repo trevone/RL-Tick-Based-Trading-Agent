@@ -16,6 +16,7 @@ from stable_baselines3 import PPO
 # from sb3_contrib import RecurrentPPO
 
 from stable_baselines3.common.monitor import Monitor # For wrapping the environment to get episode info
+from stable_baselines3.common.vec_env import VecNormalize # NEW: Import VecNormalize
 
 # Import custom modules from the project.
 try:
@@ -288,10 +289,30 @@ def main():
         # Create the base environment
         base_eval_env = SimpleTradingEnv(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=eval_env_config_for_instance)
         # Apply the FlattenAction wrapper
-        eval_env = FlattenAction(base_eval_env) # Apply the wrapper here
-        # Wrap the result with Monitor
-        eval_env = Monitor(eval_env, filename=os.path.join(eval_log_dir, "eval_monitor.csv"))
-        print("\nEvaluation environment created successfully.")
+        wrapped_eval_env = FlattenAction(base_eval_env) # Apply the wrapper here
+        
+        # NEW: Apply VecNormalize for observation standardization
+        # During evaluation, it's crucial to load the normalization statistics from training.
+        # The `VecNormalize` object is saved as 'vec_normalize.pkl' in the model's directory.
+        # We need to determine the directory of the `model_load_path` to find the .pkl file.
+        model_dir = os.path.dirname(model_load_path)
+        vec_normalize_stats_path = os.path.join(model_dir, "vec_normalize.pkl")
+        
+        # Instantiate VecNormalize with norm_obs=True, and then load the statistics
+        eval_env_normalized = VecNormalize(wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.) # NEW
+        
+        if os.path.exists(vec_normalize_stats_path):
+            eval_env_normalized = VecNormalize.load(vec_normalize_stats_path, eval_env_normalized) # Load stats into the new instance # NEW
+            if current_log_level != "none": print(f"VecNormalize statistics loaded from: {vec_normalize_stats_path}")
+        else:
+            if current_log_level != "none": print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Evaluation observations will NOT be normalized consistently with training. This can lead to poor performance.")
+            # If stats are not found, it's better to explicitly normalize to avoid issues.
+            # But the agent might perform poorly if it was trained on normalized data.
+            # For robust evaluation, it's critical these stats are present.
+
+        eval_env = Monitor(eval_env_normalized, filename=os.path.join(eval_log_dir, "eval_monitor.csv")) # Wrap with Monitor
+        
+        print("\nEvaluation environment created successfully and configured for normalization.")
     except Exception as e:
         print(f"Error creating evaluation environment: {e}")
         traceback.print_exc()
@@ -300,7 +321,9 @@ def main():
 
     try:
         # Load the trained model (PPO expects the wrapped env)
-        model = PPO.load(model_load_path, env=eval_env) # Using PPO based on your train script
+        # The env passed to model.load() should be a VecEnv, if the model was trained with VecEnv.
+        # And if it was trained with VecNormalize, the env here should also be VecNormalize
+        model = PPO.load(model_load_path, env=eval_env) # Pass the Monitor-wrapped (VecNormalize) env
         # If using RecurrentPPO, change above to: model = RecurrentPPO.load(model_load_path, env=eval_env)
         print("Model loaded successfully for evaluation.")
     except Exception as e:
@@ -343,15 +366,16 @@ def main():
             
             if current_log_level == "normal" and \
                  current_episode_step % effective_eval_config.get("print_step_info_freq", 50) == 0 :
-                # Access the underlying SimpleTradingEnv's ACTION_MAP using .env
-                print(f"  Step: {info.get('current_step')}, Action: {eval_env.env.ACTION_MAP.get(discrete_action_for_log)}, "
+                # Access the underlying SimpleTradingEnv's ACTION_MAP using .env.env (VecNormalize wraps Monitor which wraps FlattenAction which wraps SimpleTradingEnv)
+                print(f"  Step: {info.get('current_step')}, Action: {eval_env.env.env.env.ACTION_MAP.get(discrete_action_for_log)}, "
                       f"Reward: {reward:.3f}, Equity: {info.get('equity',0):.2f}")
             elif current_log_level == "detailed":
-                print(f"  Step: {info.get('current_step')}, Action: {eval_env.env.ACTION_MAP.get(discrete_action_for_log)}, ProfitTgt: {profit_target_param_for_log:.4f}, "
+                print(f"  Step: {info.get('current_step')}, Action: {eval_env.env.env.env.ACTION_MAP.get(discrete_action_for_log)}, ProfitTgt: {profit_target_param_for_log:.4f}, "
                       f"Reward: {reward:.3f}, Equity: {info.get('equity',0):.2f}, Pos: {info.get('position_open')}")
 
         final_equity = info.get('equity', eval_env.initial_balance)
-        initial_balance_env = eval_env.initial_balance
+        # Access initial_balance from the unwrapped SimpleTradingEnv
+        initial_balance_env = eval_env.env.env.env.initial_balance # Access initial_balance from the base env
         episode_profit_pct = ((final_equity - initial_balance_env) / (initial_balance_env + 1e-9)) * 100
 
         print(f"Episode finished. Steps: {current_episode_step}. Reward: {episode_reward:.2f}. "
@@ -360,11 +384,11 @@ def main():
         all_episodes_profits_pct.append(episode_profit_pct)
 
         # Append current episode's trade history to the combined list
-        all_combined_trade_history.extend(eval_env.trade_history)
+        all_combined_trade_history.extend(eval_env.env.env.env.trade_history) # Access trade_history from the base env
 
-        if current_log_level == "detailed" or (eval_env.trade_history and len(eval_env.trade_history) > 1):
+        if current_log_level == "detailed" or (eval_env.env.env.env.trade_history and len(eval_env.env.env.env.trade_history) > 1):
              print(f"--- Trade History Ep {episode+1} (Last 10 trades if any) ---")
-             temp_episode_trades_native_for_print = convert_to_native_types(eval_env.trade_history)
+             temp_episode_trades_native_for_print = convert_to_native_types(eval_env.env.env.env.trade_history)
              relevant_trades = [t for t in temp_episode_trades_native_for_print if t.get('type') != 'initial_balance']
              if relevant_trades:
                 [print(f"  {t}") for t in relevant_trades[-10:]]

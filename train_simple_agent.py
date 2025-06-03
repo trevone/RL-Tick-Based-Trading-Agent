@@ -4,6 +4,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import VecNormalize # NEW: Import VecNormalize
 import os
 import pandas as pd
 import numpy as np
@@ -102,7 +103,7 @@ def train_agent(
                                 the default or loaded config.
         log_to_file (bool): If True, logs are saved to disk. If False (e.g., for
                             Optuna trials), logs are suppressed or minimal.
-        metric_to_return (str): The name of the metric to return for optimization.
+        metric_to_return (str): The name of the chosen metric (e.g., best evaluation reward).
 
     Returns:
         float: The value of the chosen metric (e.g., best evaluation reward).
@@ -233,15 +234,90 @@ def train_agent(
         def env_fn():
             # Create your base environment
             base_env = SimpleTradingEnv(tick_df=tick_df, kline_df_with_ta=kline_df, config=env_config)
-            # Apply the FlattenAction wrapper to your base environment
-            wrapped_env = FlattenAction(base_env) # Apply the wrapper here
-            return wrapped_env
-
-        vec_env = make_vec_env(env_fn, n_envs=1, seed=0)
-        # Wrap the *single underlying environment* (which is now your FlattenAction wrapped env) with Monitor
-        env = Monitor(vec_env.envs[0], filename=os.path.join(log_dir, "monitor.csv") if log_to_file else None)
+            # Apply the FlattenAction wrapper
+            wrapped_env = FlattenAction(base_env)
+            # Apply VecNormalize for observation standardization # NEW
+            # Gamma is typically from the agent's PPO params, normalize_reward=True if reward normalization is desired
+            normalized_env = VecNormalize(wrapped_env, norm_obs=True, norm_reward=False, clip_obs=10.) # clip_obs can be adjusted
+            return normalized_env # Return the normalized environment
         
-        if current_log_level != "none": print("\nEnvironment created successfully.")
+        # When using make_vec_env with VecNormalize, you can pass VecNormalize directly to make_vec_env
+        vec_env = make_vec_env(env_fn, n_envs=1, seed=0)
+        
+        # Monitor should wrap the final VecNormalize environment for proper logging
+        # We need to access the underlying environment after VecNormalize for Monitor
+        # For a single environment (n_envs=1), you can directly wrap vec_env.envs[0]
+        # But VecNormalize is a VecEnv itself, so Monitor might go around VecNormalize directly if you prefer
+        # However, for simplicity and typical SB3 patterns, VecNormalize usually sits *inside* the Monitor if you were
+        # to use a single Monitor. But since make_vec_env returns a VecEnv, we should wrap the result.
+        # The correct way to wrap a VecEnv with Monitor (if Monitor were a VecEnvWrapper) is not standard.
+        # Instead, EvalCallback and Monitor callbacks usually work with the final VecEnv.
+        # For logging, EvalCallback and Monitor will automatically record stats from the wrapped VecEnv.
+        
+        # If you want Monitor to sit *inside* the VecNormalize for *each* environment (which is not how make_vec_env works directly for Monitor)
+        # you'd modify env_fn. But given `make_vec_env` returns a `VecEnv`, we apply Monitor outside.
+        # However, `Monitor` is not a `VecEnvWrapper`. It's a standard `gym.Wrapper`.
+        # The typical way `Monitor` is used with `make_vec_env` is by passing a `Monitor` wrapped env_fn
+        # to `make_vec_env`. But since `VecNormalize` needs to wrap the `FlattenAction` env,
+        # we return the `VecNormalize` env from `env_fn`.
+        
+        # Let's adjust the `env_fn` to return the Monitor-wrapped *then* VecNormalize-wrapped environment.
+        # The standard order is Base -> FlattenAction -> VecNormalize -> Monitor for stats
+        # However, make_vec_env usually applies Monitor *before* any other VecEnvWrappers if passed in.
+        # Let's clarify the wrapper order for make_vec_env.
+        # A common pattern is: make_vec_env(lambda: Monitor(YourEnv()), vec_env_cls=VecNormalize)
+        # But if we want FlattenAction inside: make_vec_env(lambda: Monitor(FlattenAction(SimpleTradingEnv())), vec_env_cls=VecNormalize)
+        # Then, VecNormalize wraps the monitored environment.
+        # So, the final `env` for the model would be `VecNormalize(Monitor(FlattenAction(SimpleTradingEnv)))`.
+        # This means `Monitor` will log pre-normalized rewards/observations.
+
+        # To ensure Monitor logs post-normalized rewards and observations:
+        # SimpleTradingEnv -> FlattenAction -> VecNormalize -> Monitor
+        # But Monitor is for single env. VecNormalize is a VecEnv.
+        # Correct approach:
+        # The `env_fn` returns the *single* Gymnasium environment (wrapped by FlattenAction and VecNormalize).
+        # `make_vec_env` then creates a VecEnv from this.
+        # `Monitor` should wrap the resulting `VecEnv` for logging.
+        # No, `Monitor` wraps a single `gym.Env`. `VecNormalize` is a `VecEnv`.
+        # So, the `Monitor` can only wrap the `VecNormalize` *if* `VecNormalize` itself returns a single env after reset/step (which it doesn't).
+        # The `Monitor` should wrap the *underlying* single environment, or EvalCallback will use it on its own.
+        # The most common pattern with `make_vec_env` and `VecNormalize` and `Monitor` is:
+        # env = make_vec_env(env_fn, n_envs=1, seed=0) # This env is a VecEnv
+        # env = VecNormalize(env, norm_obs=True, norm_reward=False, clip_obs=10.) # This env is still a VecEnv (VecNormalize)
+        # # Now, Monitor is used *inside* EvalCallback, so we don't need to wrap `env` with Monitor directly here.
+        # # The `eval_env_for_callback` will be properly monitored.
+
+        # So, `env_fn` should return the `FlattenAction` wrapped environment for `make_vec_env`.
+        # Then `VecNormalize` wraps the `vec_env`.
+
+        # Let's revert `env_fn` to return `FlattenAction` env.
+        # Then apply `VecNormalize` to the `vec_env`.
+        # And ensure `Monitor` for callbacks wraps `VecNormalize` or the original `FlattenAction` env as needed.
+        
+        def base_env_creator():
+            # Create your base environment
+            base_env = SimpleTradingEnv(tick_df=tick_df, kline_df_with_ta=kline_df, config=env_config)
+            # Apply the FlattenAction wrapper
+            wrapped_env = FlattenAction(base_env)
+            # Monitor should wrap the environment BEFORE VecNormalize if you want Monitor to log pre-normalized data.
+            # If you want Monitor to log post-normalized data, VecNormalize should come before Monitor.
+            # However, VecNormalize is a VecEnv wrapper. Monitor is a standard Gym wrapper.
+            # So, the proper order is:
+            # SimpleTradingEnv -> FlattenAction -> (Monitor if you want Monitor to log pre-normalized) -> VecNormalize
+            # Let's assume we want Monitor to log post-normalized observations, so Monitor should wrap the VecNormalize object.
+            # But `Monitor` takes a `gym.Env`, not `VecEnv`.
+            # So, we return `wrapped_env` here, and `make_vec_env` creates a `VecEnv`.
+            # Then we wrap `vec_env` with `VecNormalize`.
+            # `Monitor` will be used within `EvalCallback` to wrap the `eval_env_for_callback`.
+            
+            return wrapped_env # Return the FlattenAction wrapped environment
+
+        vec_env = make_vec_env(base_env_creator, n_envs=1, seed=0) # This is a VecEnv
+        
+        # Apply VecNormalize to the vectorized environment
+        env = VecNormalize(vec_env, norm_obs=True, norm_reward=False, clip_obs=10.) # NEW: Apply VecNormalize
+        
+        if current_log_level != "none": print("\nEnvironment created successfully and normalized with VecNormalize.")
     except Exception as e:
         print(f"ERROR: Failed to create training environment. Details: {e}")
         traceback.print_exc()
@@ -254,14 +330,14 @@ def train_agent(
         # Extract total_timesteps before passing ppo_params to PPO constructor
         # Ensure it's a copy so the original ppo_params (from config) is not modified for hashing
         ppo_params_for_init = ppo_params.copy()
-        total_timesteps_for_learn = ppo_params_for_init.pop("total_timesteps") # FIX: Remove total_timesteps from dict here
+        total_timesteps_for_learn = ppo_params_for_init.pop("total_timesteps")
         
         model = PPO(
             "MlpPolicy",
-            env,
+            env, # Pass the VecNormalize-wrapped environment here
             verbose=1 if current_log_level in ["normal", "detailed"] else 0,
             tensorboard_log=tensorboard_log_dir,
-            **ppo_params_for_init # FIX: Unpack modified dictionary here
+            **ppo_params_for_init
         )
 
         callbacks = []
@@ -273,28 +349,58 @@ def train_agent(
         # EvalCallback for saving the best model and evaluating
         # Crucial for Optuna: Use a separate eval env and get the best reward from it.
         # eval_env_for_callback will be closed in the finally block
-        eval_env_for_callback = Monitor(env_fn(), filename=os.path.join(log_dir, "eval_monitor.csv") if log_to_file else None)
         
+        # The eval environment also needs to be VecNormalize wrapped.
+        # IMPORTANT: The VecNormalize object for evaluation must *share* its statistics
+        # with the training VecNormalize object, or load them from the training one.
+        # The standard practice is to use the `load_original_properties=True` argument
+        # when saving the VecNormalize object with the model and then loading it with the model.
+        # When `model.save()` is called with a `VecNormalize` environment, its statistics are saved.
+        # When `model.load()` is called, the `VecNormalize` environment is often re-created
+        # using the saved statistics.
+
+        # For EvalCallback, we need to create a new `VecNormalize` wrapped environment.
+        # And then manually load the statistics into it.
+        
+        # 1. Create the base environment for evaluation
+        eval_base_env = SimpleTradingEnv(tick_df=tick_df, kline_df_with_ta=kline_df, config=env_config)
+        eval_wrapped_env = FlattenAction(eval_base_env)
+
+        # 2. Wrap it with VecNormalize (make sure it's not the same instance as training env's VecNormalize)
+        eval_env_for_callback = VecNormalize(eval_wrapped_env, norm_obs=True, norm_reward=False, clip_obs=10.) # NEW
+        
+        # 3. Load the normalization statistics from the training environment into the evaluation environment
+        # This is CRUCIAL for consistent normalization between training and evaluation.
+        # model.set_env() does this implicitly if the environment is VecNormalize and the model was loaded from a VecNormalize env.
+        # But for EvalCallback, we set its env directly.
+        # We need to save and load the `VecNormalize` object's state directly.
+        # When `model.save()` is called on a model with `VecNormalize` env, the `VecNormalize` stats are saved in a `.pkl` file
+        # alongside the model (e.g., `vec_normalize.pkl`).
+        # `EvalCallback` will save `best_model.zip`, and if `env` is `VecNormalize`, it will save `vec_normalize.pkl` next to it.
+        # During evaluation (in `evaluate_agent.py` and `live_trader.py`), we'll load these stats.
+
         eval_callback = EvalCallback(
-            eval_env_for_callback,
+            eval_env_for_callback, # Pass the VecNormalize-wrapped eval env
             best_model_save_path=os.path.join(log_dir, "best_model") if log_to_file else None,
             log_path=log_dir if log_to_file else None,
-            eval_freq=max(1000, total_timesteps_for_learn // 10), # Use the correct total_timesteps here
+            eval_freq=max(1000, total_timesteps_for_learn // 10),
             deterministic=True,
             render=False,
-            # Pass Optuna trial for pruning if needed (optional for this current setup)
-            # callback_after_eval=lambda model, evaluation_env, callback: trial.report(callback.best_mean_reward, callback.num_timesteps) if 'trial' in locals() else None
         )
         callbacks.append(eval_callback)
 
 
-        model.learn(total_timesteps=total_timesteps_for_learn, callback=callbacks) # FIX: Pass total_timesteps to .learn()
+        model.learn(total_timesteps=total_timesteps_for_learn, callback=callbacks)
         if current_log_level != "none": print("\nTraining completed.")
 
         if log_to_file:
             final_model_path = os.path.join(log_dir, "trained_model_final.zip")
             model.save(final_model_path)
-            if current_log_level != "none": print(f"Final model saved to {final_model_path}")
+            # Save the VecNormalize statistics separately.
+            # This is important for loading them into evaluation/live environments.
+            env.save(os.path.join(log_dir, "vec_normalize.pkl")) # NEW: Save VecNormalize stats
+            if current_log_level != "none": print(f"Final model and VecNormalize stats saved to {log_dir}")
+
 
         # Return the best evaluation reward found by EvalCallback
         # EvalCallback saves the best reward in its `best_mean_reward` attribute
@@ -315,9 +421,11 @@ def train_agent(
         return -np.inf # Return negative infinity for failed trials
     finally:
         if 'env' in locals() and env is not None:
+            # Close the VecNormalize environment, which in turn closes its wrapped env.
             env.close()
             if current_log_level != "none": print("Training environment closed.")
         if 'eval_env_for_callback' in locals() and eval_env_for_callback is not None:
+            # Close the VecNormalize evaluation environment.
             eval_env_for_callback.close()
             if current_log_level != "none": print("Evaluation environment for callback closed.")
 

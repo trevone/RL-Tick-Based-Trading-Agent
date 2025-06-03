@@ -29,6 +29,7 @@ try:
     # For agent loading, if using StableBaselines3:
     from stable_baselines3 import PPO
     from stable_baselines3.common.monitor import Monitor
+    from stable_baselines3.common.vec_env import VecNormalize # NEW: Import VecNormalize
     # Import DEFAULT_TRAIN_CONFIG from train_simple_agent to ensure consistent hashing logic
     from train_simple_agent import DEFAULT_TRAIN_CONFIG as TRAIN_SCRIPT_FULL_DEFAULT_CONFIG
     from custom_wrappers import FlattenAction
@@ -118,7 +119,7 @@ def quantize_quantity(quantity: float, symbol_info: dict) -> float:
 
     for f in symbol_info['filters']:
         if f['filterType'] == 'LOT_SIZE':
-            step_size = float(f['stepSize'])
+            step_size = float(f['step_size']) # Corrected key
             min_qty = float(f['minQty'])
             max_qty = float(f['maxQty'])
 
@@ -320,13 +321,24 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
     Periodically processes buffered ticks, updates the environment's observation,
     gets an action from the agent, and attempts to execute trades.
     """
-    global historical_tick_data, realtime_kline_data_with_ta, symbol_info # Add realtime_kline_data_with_ta to globals
+    global historical_tick_data, realtime_kline_data_with_ta, symbol_info
     log_level = run_config["run_settings"]["log_level"]
     data_processing_interval_ms = run_config["run_settings"]["data_processing_interval_ms"] / 1000.0
     env_tick_window_size = env_config["tick_feature_window_size"]
-    trade_symbol = run_config["binance_settings"]["default_symbol"] # e.g., "BTCUSDT"
+    trade_symbol = run_config["binance_settings"]["default_symbol"]
 
     print("\n--- Starting Agent Action Loop ---")
+
+    # Access the model's environment to get the path where VecNormalize stats might be.
+    # Assuming model was loaded with an env wrapped by VecNormalize
+    # This might require a more explicit way to get the vec_normalize.pkl path
+    # from the model's original training directory. `resolved_model_path` has the model's .zip path.
+    # The .pkl will be in the same directory as the .zip file or its parent.
+    model_dir = os.path.dirname(model.env.filename if hasattr(model.env, 'filename') else run_config["run_settings"]["model_path"])
+    # If the model.env is a VecNormalize, then its stats path should be derived from where the model was loaded.
+    # Let's assume `resolved_model_path` (from `main`) is available.
+    
+    vec_normalize_stats_path = os.path.join(os.path.dirname(run_config["run_settings"]["_resolved_model_path"]), "vec_normalize.pkl") # NEW: Path to VecNormalize stats
 
     # Initialize environment with dummy data for initial observation space creation
     # The tick_df will be updated, kline_df_with_ta comes from the global realtime_kline_data_with_ta
@@ -336,9 +348,20 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
         config=env_config
     )
     # Apply the FlattenAction wrapper to the base environment
-    live_env_instance_wrapped = FlattenAction(base_live_env_instance)
+    wrapped_live_env_instance = FlattenAction(base_live_env_instance) #
+
+    # NEW: Apply VecNormalize for observation standardization
+    live_env_normalized = VecNormalize(wrapped_live_env_instance, norm_obs=True, norm_reward=False, clip_obs=10.) #
+    
+    # Load normalization statistics from training
+    if os.path.exists(vec_normalize_stats_path):
+        live_env_normalized = VecNormalize.load(vec_normalize_stats_path, live_env_normalized) # NEW
+        if log_level != "none": print(f"VecNormalize statistics loaded from: {vec_normalize_stats_path}")
+    else:
+        if log_level != "none": print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Live observations will NOT be normalized consistently with training. This can lead to poor performance.")
+
     # Wrap the result with Monitor
-    live_env_instance = Monitor(live_env_instance_wrapped)
+    live_env_instance = Monitor(live_env_normalized) #
     
     # Do an initial reset to set up the environment's internal state (balance, position, etc.)
     current_observation, info = live_env_instance.reset()
@@ -378,13 +401,13 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
 
         # 2. Generate current observation for the agent
         # Ensure sufficient tick data for observation window
-        if len(historical_tick_data) < live_env_instance.env.tick_feature_window_size:
+        if len(historical_tick_data) < live_env_instance.env.env.env.tick_feature_window_size: # Access base env
             if log_level != "none":
                 print("WARNING: Not enough historical tick data for full observation window. Padding will occur. Skipping action.")
             continue
 
         # Ensure sufficient K-line data for observation window
-        if len(realtime_kline_data_with_ta) < live_env_instance.env.kline_window_size:
+        if len(realtime_kline_data_with_ta) < live_env_instance.env.env.env.kline_window_size: # Access base env
             if log_level != "none":
                 print("WARNING: Not enough real-time K-line data for full observation window. Padding will occur. Skipping action.")
             continue
@@ -397,17 +420,25 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
             kline_df_with_ta=realtime_kline_data_with_ta.copy(), # Pass updated k-line data
             config=env_config
         )
-        temp_env_for_obs = FlattenAction(temp_base_env_for_obs)
+        temp_wrapped_env_for_obs = FlattenAction(temp_base_env_for_obs) #
+        temp_env_normalized_for_obs = VecNormalize(temp_wrapped_env_for_obs, norm_obs=True, norm_reward=False, clip_obs=10.) # NEW
+        
+        # Load normalization statistics into this temporary env as well
+        if os.path.exists(vec_normalize_stats_path):
+            temp_env_normalized_for_obs = VecNormalize.load(vec_normalize_stats_path, temp_env_normalized_for_obs) # NEW
+        
+        temp_env_for_obs_monitor = Monitor(temp_env_normalized_for_obs) #
         
         # Set its current_step to the last available tick index for observation generation
-        temp_env_for_obs.env.current_step = temp_env_for_obs.env.start_step + len(historical_tick_data) - 1
-        if temp_env_for_obs.env.current_step < temp_env_for_obs.env.start_step:
-            temp_env_for_obs.env.current_step = temp_env_for_obs.env.start_step
+        temp_env_for_obs_monitor.env.env.env.current_step = temp_env_for_obs_monitor.env.env.env.start_step + len(historical_tick_data) - 1 # Access base env
+        if temp_env_for_obs_monitor.env.env.env.current_step < temp_env_for_obs_monitor.env.env.env.start_step: # Access base env
+            temp_env_for_obs_monitor.env.env.env.current_step = temp_env_for_obs_monitor.env.env.env.start_step # Access base env
 
-        current_observation, info = temp_env_for_obs._get_observation(), temp_env_for_obs.env._get_info()
+        current_observation, info = temp_env_for_obs_monitor._get_obs(), temp_env_for_obs_monitor.env.env.env._get_info() # _get_obs from Monitor, _get_info from base env
 
         # --- Agent Action ---
         if model is not None and current_observation is not None and info["current_tick_price"] > 0:
+            # model.predict expects a batch dimension, even for a single observation
             obs_for_model = np.array(current_observation).reshape(1, -1)
             
             action_array, _states = model.predict(obs_for_model, deterministic=True)
@@ -415,7 +446,7 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
             discrete_action = int(np.round(action_array[0]))
             profit_target_param = action_array[1]
             
-            action_desc = live_env_instance.env.ACTION_MAP.get(discrete_action, "UNKNOWN")
+            action_desc = live_env_instance.env.env.env.ACTION_MAP.get(discrete_action, "UNKNOWN") # Access base env
             print(f"\n--- Agent Decision ({datetime.now(timezone.utc).isoformat()}) ---")
             print(f"  Current Tick Price: {info['current_tick_price']:.4f}")
             print(f"  Portfolio Equity: {info['equity']:.2f}, Balance: {info['current_balance']:.2f}")
@@ -428,7 +459,7 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
             
             current_symbol_info = symbol_info.get(trade_symbol, {})
 
-            base_trade_amount_usd = live_env_instance.env.initial_balance * live_env_instance.env.base_trade_amount_ratio
+            base_trade_amount_usd = live_env_instance.env.env.env.initial_balance * live_env_instance.env.env.env.base_trade_amount_ratio # Access base env
             desired_quantity = base_trade_amount_usd / (current_price + 1e-9)
 
             quantity_to_trade_buy = quantize_quantity(desired_quantity, current_symbol_info)
@@ -444,14 +475,14 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
                             # --- END ACTUAL API CALL ---
 
                             # Simulated fill logic, update base env's internal state
-                            simulated_cost = quantity_to_trade_buy * current_price * (1 + live_env_instance.env.commission_pct)
-                            if live_env_instance.env.current_balance >= simulated_cost:
-                                live_env_instance.env.current_balance -= simulated_cost
-                                live_env_instance.env.position_open = True
-                                live_env_instance.env.entry_price = current_price
-                                live_env_instance.env.position_volume = quantity_to_trade_buy
-                                live_env_instance.env.current_desired_profit_target = profit_target_param
-                                print(f"  REAL BUY (Simulated Fill): {quantity_to_trade_buy:.6f} @ {current_price:.4f}. Balance: {live_env_instance.env.current_balance:.2f}")
+                            simulated_cost = quantity_to_trade_buy * current_price * (1 + live_env_instance.env.env.env.commission_pct) # Access base env
+                            if live_env_instance.env.env.env.current_balance >= simulated_cost: # Access base env
+                                live_env_instance.env.env.env.current_balance -= simulated_cost # Access base env
+                                live_env_instance.env.env.env.position_open = True # Access base env
+                                live_env_instance.env.env.env.entry_price = current_price # Access base env
+                                live_env_instance.env.env.env.position_volume = quantity_to_trade_buy # Access base env
+                                live_env_instance.env.env.env.current_desired_profit_target = profit_target_param # Access base env
+                                print(f"  REAL BUY (Simulated Fill): {quantity_to_trade_buy:.6f} @ {current_price:.4f}. Balance: {live_env_instance.env.env.env.current_balance:.2f}") # Access base env
                             else:
                                 print("  REAL BUY (Simulated Fill Fail): Insufficient internal balance for trade.")
                         except BinanceAPIException as bae:
@@ -466,7 +497,7 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
 
             elif discrete_action == 2: # SELL
                 if info['position_open']:
-                    quantity_to_trade_sell = live_env_instance.env.position_volume
+                    quantity_to_trade_sell = live_env_instance.env.env.env.position_volume # Access base env
                     if binance_api_client and quantity_to_trade_sell > 0:
                         print(f"  ATTEMPTING REAL SELL ORDER on Binance: {quantity_to_trade_sell:.6f} {trade_symbol[:-4]} @ MARKET price")
                         try:
@@ -476,13 +507,13 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
                             # --- END ACTUAL API CALL ---
 
                             # Simulated fill logic, update base env's internal state
-                            simulated_revenue = quantity_to_trade_sell * current_price * (1 - live_env_instance.env.commission_pct)
-                            simulated_cost_basis = live_env_instance.env.entry_price * quantity_to_trade_sell
+                            simulated_revenue = quantity_to_trade_sell * current_price * (1 - live_env_instance.env.env.env.commission_pct) # Access base env
+                            simulated_cost_basis = live_env_instance.env.env.env.entry_price * quantity_to_trade_sell # Access base env
                             simulated_pnl = simulated_revenue - simulated_cost_basis
 
-                            live_env_instance.env.current_balance += simulated_revenue
-                            live_env_instance.env.position_open = False; live_env_instance.env.entry_price = 0.0; live_env_instance.env.position_volume = 0.0; live_env_instance.env.current_desired_profit_target = 0.0
-                            print(f"  REAL SELL (Simulated Fill): {quantity_to_trade_sell:.6f} @ {current_price:.4f}. PnL: {simulated_pnl:.2f}. Bal: {live_env_instance.env.current_balance:.2f}")
+                            live_env_instance.env.env.env.current_balance += simulated_revenue # Access base env
+                            live_env_instance.env.env.env.position_open = False; live_env_instance.env.env.env.entry_price = 0.0; live_env_instance.env.env.env.position_volume = 0.0; live_env_instance.env.env.env.current_desired_profit_target = 0.0 # Access base env
+                            print(f"  REAL SELL (Simulated Fill): {quantity_to_trade_sell:.6f} @ {current_price:.4f}. PnL: {simulated_pnl:.2f}. Bal: {live_env_instance.env.env.env.current_balance:.2f}") # Access base env
                         except BinanceAPIException as bae:
                             print(f"  ERROR sending SELL order: {bae.code} - {bae.message}")
                         except Exception as e:
@@ -497,22 +528,22 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
                 if log_level == "detailed":
                     print("  HOLD.")
 
-            current_equity_live = live_env_instance.env.current_balance + (live_env_instance.env.position_volume * current_price if live_env_instance.env.position_open else 0)
-            if current_equity_live < live_env_instance.env.catastrophic_loss_limit:
+            current_equity_live = live_env_instance.env.env.env.current_balance + (live_env_instance.env.env.env.position_volume * current_price if live_env_instance.env.env.env.position_open else 0) # Access base env
+            if current_equity_live < live_env_instance.env.env.env.catastrophic_loss_limit: # Access base env
                 print(f"  CRITICAL: Catastrophic loss detected! Equity dropped to {current_equity_live:.2f}")
-                if live_env_instance.env.position_open:
+                if live_env_instance.env.env.env.position_open: # Access base env
                     if binance_api_client:
-                        print(f"  ATTEMPTING EMERGENCY LIQUIDATION on Binance for {live_env_instance.env.position_volume:.6f} {trade_symbol[:-4]}...")
+                        print(f"  ATTEMPTING EMERGENCY LIQUIDATION on Binance for {live_env_instance.env.env.env.position_volume:.6f} {trade_symbol[:-4]}...") # Access base env
                         try:
                             # --- ACTUAL BINANCE API CALL (UNCOMMENT TO ENABLE REAL TRADES) ---
-                            order = binance_api_client.order_market_sell(symbol=trade_symbol, quantity=live_env_instance.env.position_volume)
+                            order = binance_api_client.order_market_sell(symbol=trade_symbol, quantity=live_env_instance.env.env.env.position_volume) # Access base env
                             print("  Emergency liquidation order sent.")
                             # --- END ACTUAL API CALL ---
                         except Exception as e:
                             print(f"  ERROR during emergency liquidation: {e}")
                 
-                live_env_instance.env.current_balance = live_env_instance.env.initial_balance
-                live_env_instance.env.position_open = False
+                live_env_instance.env.env.env.current_balance = live_env_instance.env.env.env.initial_balance # Access base env
+                live_env_instance.env.env.env.position_open = False # Access base env
                 break
 
         else:
@@ -523,7 +554,7 @@ async def process_and_act(env_config: dict, model, run_config: dict, binance_api
 
 # --- Main Execution Block ---
 async def main():
-    global binance_client, initial_dummy_kline_data_for_env, realtime_kline_data_with_ta # Add realtime_kline_data_with_ta to globals
+    global binance_client, initial_dummy_kline_data_for_env, realtime_kline_data_with_ta
 
     try:
         loaded_config = load_config("config.yaml")
@@ -547,7 +578,7 @@ async def main():
     # Determine WebSocket URI and symbol for K-LINES
     websocket_uri_kline = binance_ws_config["testnet_uri"] if is_testnet else binance_ws_config["uri"]
     kline_stream_suffix = binance_ws_config["testnet_kline_symbol_stream_suffix"] if is_testnet else binance_ws_config["kline_symbol_stream_suffix"]
-    websocket_symbol_kline = f"{binance_settings['default_symbol'].lower()}{kline_stream_suffix}{binance_settings['historical_interval']}" # e.g., btcusdt@kline_1h
+    websocket_symbol_kline = f"{binance_settings['default_symbol'].lower()}{kline_stream_suffix}{binance_settings['historical_interval']}"
 
 
     api_key = binance_settings.get("api_key")
@@ -618,25 +649,41 @@ async def main():
     model = None
     model_path_from_config = run_settings.get("model_path")
     
-    resolved_model_path = resolve_model_path(
+    resolved_model_path_tuple = resolve_model_path( # NEW: Capture the tuple from resolve_model_path
         eval_specific_config=run_settings,
         full_yaml_config=loaded_config,
         train_script_fallback_config=TRAIN_SCRIPT_FULL_DEFAULT_CONFIG,
         env_script_fallback_config=DEFAULT_ENV_CONFIG,
         log_level=log_level
     )
+    resolved_model_path = resolved_model_path_tuple[0] if resolved_model_path_tuple else None # NEW: Extract actual model path
+    run_settings["_resolved_model_path"] = resolved_model_path # NEW: Store resolved path for process_and_act to use
 
     if resolved_model_path:
+        # Determine path to VecNormalize stats based on the resolved model path
+        vec_normalize_stats_path = os.path.join(os.path.dirname(resolved_model_path), "vec_normalize.pkl") # NEW
+        
         try:
-            # Create a dummy environment for model loading (StableBaselines3 needs it for obs/action space validation)
+            # Create a dummy base environment for model loading
             dummy_base_env_for_model_load = SimpleTradingEnv(
                 tick_df=pd.DataFrame(columns=['Price', 'Quantity', 'IsBuyerMaker'], index=pd.to_datetime([], utc=True)),
                 kline_df_with_ta=initial_dummy_kline_data_for_env.copy(), # Use the dummy kline data for structure
                 config=env_config
             )
-            dummy_env_for_model_load = FlattenAction(dummy_base_env_for_model_load)
+            dummy_wrapped_env_for_model_load = FlattenAction(dummy_base_env_for_model_load) #
             
-            model = PPO.load(resolved_model_path, env=dummy_env_for_model_load)
+            # NEW: Wrap dummy env with VecNormalize for model loading
+            dummy_env_normalized_for_model_load = VecNormalize(dummy_wrapped_env_for_model_load, norm_obs=True, norm_reward=False, clip_obs=10.) #
+
+            # Load normalization statistics into the dummy environment
+            if os.path.exists(vec_normalize_stats_path):
+                dummy_env_normalized_for_model_load = VecNormalize.load(vec_normalize_stats_path, dummy_env_normalized_for_model_load) # NEW
+                if log_level != "none": print(f"VecNormalize statistics loaded for model loading from: {vec_normalize_stats_path}")
+            else:
+                if log_level != "none": print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Model might behave unexpectedly as its dummy environment is not consistently normalized.")
+
+            # Load the model with the VecNormalize-wrapped dummy environment
+            model = PPO.load(resolved_model_path, env=dummy_env_normalized_for_model_load) # Pass the VecNormalize-wrapped dummy env
             print(f"Agent model loaded successfully from: {resolved_model_path}")
         except Exception as e:
             print(f"ERROR: Could not load agent model from {resolved_model_path}: {e}")
