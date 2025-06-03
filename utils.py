@@ -185,9 +185,8 @@ def fetch_and_cache_kline_data(
     price_features_to_add = price_features_to_add if price_features_to_add is not None else []
     os.makedirs(cache_dir, exist_ok=True)
 
-    # Sort features to ensure consistent filename for caching
-    sorted_features_str = "_".join(sorted([f.lower().replace('_','') for f in price_features_to_add]))
-    cache_specifier = f"bn_klines_{symbol}_{interval}_{start_date_str}_to_{end_date_str}_{sorted_features_str}"
+    # Removed sorted_features_str from cache_specifier for concise filenames
+    cache_specifier = f"bn_klines_{symbol}_{interval}_{start_date_str}_to_{end_date_str}" 
     
     safe_filename = "".join([c if c.isalnum() or c in ['_', '-'] else '_' for c in cache_specifier])
     cache_file = os.path.join(cache_dir, f"{safe_filename}.{cache_file_type}")
@@ -198,6 +197,7 @@ def fetch_and_cache_kline_data(
             df = pd.read_parquet(cache_file) if cache_file_type == "parquet" else pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if df.index.tz is None and not df.empty: df.index = df.index.tz_localize('UTC')
             # Check if columns are consistent, if not, refetch (e.g., if TA features changed)
+            # This check is still necessary to ensure cached data matches requested features
             if not all(f in df.columns for f in price_features_to_add if f not in ['Open', 'High', 'Low', 'Close', 'Volume']):
                 print(f"Warning: Cached K-line data missing some requested TA features. Refetching: {cache_file}")
                 os.remove(cache_file) # Delete incomplete cache

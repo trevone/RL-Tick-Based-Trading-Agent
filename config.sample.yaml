@@ -97,23 +97,23 @@ environment:
     # --- Oscillators ---
     # Relative Strength Index (RSI)
     - "RSI_7"   # 7-period RSI
-    - "RSI_14"  # 14-period RSI (common default)
+    # - "RSI_14"  # 14-period RSI (common default)
     # - "RSI_21"
 
     # Moving Average Convergence Divergence (MACD)
     # Standard MACD uses 12, 26, 9 periods. 'MACD' will calculate the MACD line.
     # To include the signal line or histogram, you'd need to extend utils.py
     # to save them as separate columns (e.g., "MACD_Signal", "MACD_Hist") and add them here.
-    - "MACD"    # MACD Line
+    # - "MACD"    # MACD Line
 
     # Average Directional Index (ADX)
     # Measures trend strength.
-    - "ADX"     # 14-period ADX (common default)
+    # - "ADX"     # 14-period ADX (common default)
 
     # Stochastic Oscillator
     # Compares closing price to its price range over a given period.
     # %K is the fast line. %D is the slow line (often smoothed %K).
-    - "STOCH_K" # Fast Stochastic %K line (common periods: 5,3,3)
+    # - "STOCH_K" # Fast Stochastic %K line (common periods: 5,3,3)
     # - "STOCH_D" # Slow Stochastic %D line (needs implementation in utils.py if desired)
 
     # Commodity Channel Index (CCI)
@@ -132,18 +132,18 @@ environment:
     # Bollinger Bands
     # Measures volatility and identifies overbought/oversold conditions.
     # Typically includes Upper, Middle (SMA), and Lower bands.
-    - "BBANDS_Upper" # Upper Bollinger Band (common periods: 20, 2 std dev)
+    # - "BBANDS_Upper" # Upper Bollinger Band (common periods: 20, 2 std dev)
     # - "BBANDS_Middle" # Middle Band (SMA) (can use SMA_20 if already calculated)
     # - "BBANDS_Lower"  # Lower Bollinger Band (needs implementation in utils.py if desired)
 
     # --- Volume Indicators ---
     # Accumulation/Distribution Line (AD)
     # Measures the cumulative flow of money into and out of an asset.
-    - "AD"      # Accumulation/Distribution Line
+    # - "AD"      # Accumulation/Distribution Line
 
     # On-Balance Volume (OBV)
     # Relates volume to price change.
-    - "OBV"     # On-Balance Volume
+    # - "OBV"     # On-Balance Volume
 
     # --- Other Common Indicators (add logic to utils.py if you enable) ---
     # Momentum (MOM)
@@ -160,17 +160,17 @@ environment:
 
     # --- Candlestick Patterns (Add these lines) ---
     # Each will typically return 100 (bullish), -100 (bearish), or 0 (no pattern)
-    - "CDLDOJI"                 # Doji
-    - "CDLHAMMER"               # Hammer
-    - "CDLINVERTEDHAMMER"       # Inverted Hammer
-    - "CDLENGULFING"            # Engulfing Pattern (Bullish/Bearish)
-    - "CDLHARAMI"               # Harami Pattern (Bullish/Bearish)
-    - "CDLMARUBOZU"             # Marubozu (full-bodied candle)
-    - "CDLDRAGONFLYDOJI"        # Dragonfly Doji
-    - "CDLGRAVESTONEDOJI"       # Gravestone Doji
-    - "CDLSHOOTINGSTAR"         # Shooting Star
-    - "CDLMORNINGSTAR"          # Morning Star (bullish reversal)
-    - "CDLEVENINGSTAR"          # Evening Star (bearish reversal)
+    # - "CDLDOJI"                 # Doji
+    # - "CDLHAMMER"               # Hammer
+    # - "CDLINVERTEDHAMMER"       # Inverted Hammer
+    # - "CDLENGULFING"            # Engulfing Pattern (Bullish/Bearish)
+    # - "CDLHARAMI"               # Harami Pattern (Bullish/Bearish)
+    # - "CDLMARUBOZU"             # Marubozu (full-bodied candle)
+    # - "CDLDRAGONFLYDOJI"        # Dragonfly Doji
+    # - "CDLGRAVESTONEDOJI"       # Gravestone Doji
+    # - "CDLSHOOTINGSTAR"         # Shooting Star
+    # - "CDLMORNINGSTAR"          # Morning Star (bullish reversal)
+    # - "CDLEVENINGSTAR"          # Evening Star (bearish reversal)
     #
     # You can find many more `CDL_` functions in TA-Lib. Some popular ones include:
     # - "CDL3WHITESOLDIERS"       # 3 White Soldiers (bullish)

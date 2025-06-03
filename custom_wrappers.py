@@ -35,7 +35,7 @@ class FlattenAction(gym.ActionWrapper):
             raise ValueError(f"Second element of Tuple must be Box, but got {type(self.box_space)}")
 
         # Define the new flattened action space (Box)
-        # We need to map discrete actions (0, 1, 2) to a continuous range, e.g., [-1, 0, 1]
+        # We need to map discrete actions (0, 1, 2) to a continuous range, e.g., 0 to num_discrete-1
         # and then combine with the Box space.
         
         # Action mapping:
