@@ -1,0 +1,483 @@
+# config.yaml
+#
+# This file centralizes all configuration parameters for the RL trading agent
+# project, including training, live trading, evaluation, and data fetching.
+#
+# Sections:
+# 1. run_settings: General logging, model naming, and live/eval specific directories.
+# 2. environment: Parameters for the SimpleTradingEnv (observation space, rewards, trading rules).
+# 3. ppo_params: Hyperparameters for the Stable Baselines3 PPO agent.
+# 4. binance_settings: General Binance data fetching settings (historical data, API keys, testnet).
+# 5. binance_websocket: Specific settings for live WebSocket connections.
+# 6. binance_api_client: Specific settings for Binance REST API calls (for live trading orders).
+# 7. evaluation_data: Date ranges for historical data used during model evaluation.
+# 8. hash_config_keys: Defines which config parameters contribute to the unique hash
+#                      for a training run, ensuring reproducibility and organized logging.
+# ==============================================================================
+
+
+# 1. GENERAL RUN SETTINGS
+#    Settings that apply across different scripts (training, live, evaluation).
+run_settings:
+  # Base directory where training logs, TensorBoard files, and trained models will be saved.
+  # A unique subdirectory will be created under this base for each training run.
+  log_dir_base: "./logs/ppo_trading/"
+
+  # Base name for the trained model files (e.g., "tick_trading_agent").
+  # This name is combined with a configuration hash to form a unique run ID.
+  model_name: "tick_trading_agent"
+
+  # Controls the verbosity of console output for scripts.
+  # Options: "none" (minimal), "normal" (standard progress), "detailed" (verbose debugging).
+  log_level: "normal"
+
+  # --- Live Trading Specific Sub-settings ---
+  # Directory where live trading logs, performance metrics, and trade history will be saved.
+  live_log_dir: "./logs/live_trading/"
+
+  # Explicit path to a trained model (.zip file) for live trading or evaluation.
+  # If `null`, the script will attempt to derive the model path based on
+  # the 'model_name' and the configuration hash used during training.
+  # Example: "./logs/ppo_trading/c204e9b_tick_trading_agent/best_model/best_model.zip"
+  model_path: null
+
+  # Alternative explicit model path. Used if `model_path` is null and auto-derivation fails,
+  # or if a primary model is found but an alternative is preferred for some reason.
+  # alt_model_path: null
+
+  # How often (in seconds) the live trader's main loop processes new buffered ticks,
+  # generates an observation, and allows the agent to take an action.
+  # For very high-frequency tick data, adjust carefully.
+  refresh_interval_sec: 1 # Default
+
+  # How often (in milliseconds) buffered ticks are processed and environment updated.
+  # Affects how frequently the agent receives a new observation.
+  data_processing_interval_ms: 100 # Default
+
+
+# 2. ENVIRONMENT CONFIGURATION
+#    Defines the observation space, reward structure, and trading rules
+#    for the SimpleTradingEnv (your custom Gymnasium environment).
+environment:
+  # Number of historical K-lines (e.g., 1H candles) to include in the observation.
+  # This forms the time-series context for higher-level features.
+  kline_window_size: 20
+
+  # List of K-line price features to include in the observation, including Technical Indicators (TAs).
+  # These TAs are calculated using TA-Lib in utils.py.
+  #
+  # To enable an indicator, uncomment the line.
+  # For indicators with periods (like SMA, EMA, RSI), you can specify the period
+  # in the name (e.g., SMA_10, RSI_7) and utils.py will parse it.
+  kline_price_features:
+    # --- Base OHLCV Features (Mandatory and usually always included) ---
+    - "Open"
+    - "High"
+    - "Low"
+    - "Close"
+    - "Volume"
+
+    # --- Moving Averages ---
+    # Simple Moving Average (SMA)
+    # - "SMA_5"
+    - "SMA_10"  # 10-period SMA
+    # - "SMA_20"
+    # - "SMA_50"
+    # - "SMA_100"
+    # - "SMA_200"
+
+    # Exponential Moving Average (EMA)
+    # - "EMA_5"
+    # - "EMA_10"
+    # - "EMA_20"
+    # - "EMA_50"
+    # - "EMA_100"
+    # - "EMA_200"
+
+    # --- Oscillators ---
+    # Relative Strength Index (RSI)
+    - "RSI_7"   # 7-period RSI
+    - "RSI_14"  # 14-period RSI (common default)
+    # - "RSI_21"
+
+    # Moving Average Convergence Divergence (MACD)
+    # Standard MACD uses 12, 26, 9 periods. 'MACD' will calculate the MACD line.
+    # To include the signal line or histogram, you'd need to extend utils.py
+    # to save them as separate columns (e.g., "MACD_Signal", "MACD_Hist") and add them here.
+    - "MACD"    # MACD Line
+
+    # Average Directional Index (ADX)
+    # Measures trend strength.
+    - "ADX"     # 14-period ADX (common default)
+
+    # Stochastic Oscillator
+    # Compares closing price to its price range over a given period.
+    # %K is the fast line. %D is the slow line (often smoothed %K).
+    - "STOCH_K" # Fast Stochastic %K line (common periods: 5,3,3)
+    # - "STOCH_D" # Slow Stochastic %D line (needs implementation in utils.py if desired)
+
+    # Commodity Channel Index (CCI)
+    # Measures deviations from its statistical mean.
+    # - "CCI"
+
+    # Williams %R
+    # Momentum indicator, inverse of Stochastic Oscillator.
+    # - "WILLR"
+
+    # --- Volatility Indicators ---
+    # Average True Range (ATR)
+    # Measures market volatility.
+    - "ATR"     # 14-period ATR (common default)
+
+    # Bollinger Bands
+    # Measures volatility and identifies overbought/oversold conditions.
+    # Typically includes Upper, Middle (SMA), and Lower bands.
+    - "BBANDS_Upper" # Upper Bollinger Band (common periods: 20, 2 std dev)
+    # - "BBANDS_Middle" # Middle Band (SMA) (can use SMA_20 if already calculated)
+    # - "BBANDS_Lower"  # Lower Bollinger Band (needs implementation in utils.py if desired)
+
+    # --- Volume Indicators ---
+    # Accumulation/Distribution Line (AD)
+    # Measures the cumulative flow of money into and out of an asset.
+    - "AD"      # Accumulation/Distribution Line
+
+    # On-Balance Volume (OBV)
+    # Relates volume to price change.
+    - "OBV"     # On-Balance Volume
+
+    # --- Other Common Indicators (add logic to utils.py if you enable) ---
+    # Momentum (MOM)
+    # - "MOM"
+
+    # Rate of Change (ROC)
+    # - "ROC"
+
+    # Money Flow Index (MFI)
+    # - "MFI"
+
+    # Parabolic SAR
+    # - "SAR" # Requires specific implementation as it's not a simple single output series
+
+    # --- Candlestick Patterns (Add these lines) ---
+    # Each will typically return 100 (bullish), -100 (bearish), or 0 (no pattern)
+    - "CDLDOJI"                 # Doji
+    - "CDLHAMMER"               # Hammer
+    - "CDLINVERTEDHAMMER"       # Inverted Hammer
+    - "CDLENGULFING"            # Engulfing Pattern (Bullish/Bearish)
+    - "CDLHARAMI"               # Harami Pattern (Bullish/Bearish)
+    - "CDLMARUBOZU"             # Marubozu (full-bodied candle)
+    - "CDLDRAGONFLYDOJI"        # Dragonfly Doji
+    - "CDLGRAVESTONEDOJI"       # Gravestone Doji
+    - "CDLSHOOTINGSTAR"         # Shooting Star
+    - "CDLMORNINGSTAR"          # Morning Star (bullish reversal)
+    - "CDLEVENINGSTAR"          # Evening Star (bearish reversal)
+    #
+    # You can find many more `CDL_` functions in TA-Lib. Some popular ones include:
+    # - "CDL3WHITESOLDIERS"       # 3 White Soldiers (bullish)
+    # - "CDL3BLACKCROWS"          # 3 Black Crows (bearish)
+    # - "CDLDOJISTAR"             # Doji Star (Morning/Evening Doji Star)
+    # - "CDLHANGINGMAN"           # Hanging Man (bearish)
+    # - "CDLPIERCING"             # Piercing Pattern (bullish)
+    # - "CDLDARKCLOUDCOVER"       # Dark Cloud Cover (bearish)
+    # - "CDLHARAMICROSS"          # Harami Cross
+    # - "CDLSPINNINGTOP"          # Spinning Top
+
+
+  # Number of historical ticks to include in the observation.
+  # Provides granular, real-time market microstructure information.
+  tick_feature_window_size: 50
+
+  # Specific features to extract from raw tick data for observation.
+  # 'Price' is crucial for decision-making and is mandatory.
+  tick_features_to_use:
+    - "Price"
+    - "Quantity" # Volume of each trade
+    # Add other relevant tick features if available from your data source (e.g., "IsBuyerMaker")
+
+  # Initial capital balance available to the agent at the start of an episode.
+  initial_balance: 10000.0
+
+  # Commission rate per trade, as a percentage (e.g., 0.001 = 0.1%).
+  commission_pct: 0.001
+
+  # Proportion of the initial_balance to be used for a single trade.
+  # Helps in managing position sizing.
+  base_trade_amount_ratio: 0.1
+
+  # Smallest tradable unit of the asset (e.g., 0.000001 for BTC).
+  # Ensures trade sizes adhere to exchange minimums.
+  min_tradeable_unit: 1e-6
+
+  # If agent's equity drops below this percentage of initial balance, the episode terminates.
+  # Acts as a stop-loss mechanism for the learning process.
+  catastrophic_loss_threshold_pct: 0.3
+
+  # Clipping values for observations to prevent extreme outliers from
+  # destabilizing the neural network training.
+  obs_clip_low: -5.0
+  obs_clip_high: 5.0
+
+  # --- Continuous Profit Target Action Parameters ---
+  # Minimum and maximum percentage ranges for the agent to set a profit target.
+  min_profit_target_low: 0.001  # e.g., 0.1%
+  min_profit_target_high: 0.05  # e.g., 5%
+
+  # --- Reward and Penalty Settings ---
+  # These values define the reinforcement signal for the agent.
+  # They often require significant tuning to shape desired behaviors.
+  reward_open_buy_position: 0.001       # Small incentive to initiate a position.
+  penalty_buy_insufficient_balance: -0.1 # Discourages attempts to buy without enough funds.
+  penalty_buy_position_already_open: -0.05 # Discourages redundant buy signals when in position.
+
+  reward_sell_profit_base: 0.1          # Base reward for any profitable sell.
+  reward_sell_profit_factor: 10.0       # Scales reward based on the magnitude of profit.
+  penalty_sell_loss_factor: 10.0        # Scales penalty based on the magnitude of loss.
+  penalty_sell_loss_base: -0.01         # Base penalty for any losing sell.
+  penalty_sell_no_position: -0.1        # Discourages attempts to sell when no position is open.
+
+  reward_hold_profitable_position: 0.0001 # Small incentive to hold winning trades.
+  penalty_hold_losing_position: -0.0005 # Penalizes holding trades that are losing money.
+  penalty_hold_flat_position: -0.0001   # Small penalty for holding a flat position (encourages action).
+
+  penalty_catastrophic_loss: -100.0     # Large penalty for hitting the catastrophic loss limit.
+  reward_eof_sell_factor: 5.0           # Incentive to close positions gracefully at episode end.
+
+  reward_sell_meets_target_bonus: 0.5   # Bonus if profit target is met on sell.
+  penalty_sell_profit_below_target: -0.05 # Penalty if sell is profitable but below the set target.
+
+  # Controls rendering output during environment steps (e.g., for `gym.render()`).
+  # "human" for console print; "none" for no rendering.
+  # custom_print_render: "none" # Default in base_env, often overridden by script log_level.
+
+
+# 3. PPO AGENT SPECIFIC PARAMETERS
+#    Hyperparameters passed directly to the stable_baselines3 PPO model constructor.
+#    These are primary targets for hyperparameter optimization.
+ppo_params:
+  # Total number of timesteps the agent will train for.
+  total_timesteps: 10000000
+
+  # Learning rate for the Adam optimizer.
+  learning_rate: 0.0003
+
+  # Number of steps to run for each environment per update.
+  # Controls the rollout buffer size.
+  n_steps: 2048
+
+  # Minibatch size for stochastic gradient descent during policy optimization.
+  # Should be a divisor of n_steps.
+  batch_size: 64
+
+  # Number of epochs when optimizing the surrogate loss function.
+  n_epochs: 10
+
+  # Discount factor for future rewards (gamma).
+  # Balances immediate vs. long-term rewards.
+  gamma: 0.99
+
+  # Factor for trade-off of bias vs. variance for Generalized Advantage Estimator (GAE).
+  gae_lambda: 0.95
+
+  # Clipping parameter for the PPO policy objective.
+  # Prevents overly large policy updates.
+  clip_range: 0.2
+
+  # Entropy coefficient. Adds a penalty to the loss function to encourage exploration.
+  ent_coef: 0.01
+
+  # Value function coefficient. Weights the value function loss in the total loss.
+  vf_coef: 0.5
+
+  # The maximum value for gradient clipping. Prevents exploding gradients.
+  max_grad_norm: 0.5
+
+  # The limit for the KL divergence between the old and new policy.
+  # Helps control the magnitude of policy updates.
+  target_kl: 0.02
+
+  # Network architecture for the MLP policy.
+  # Provided as a string to be parsed as a Python dict in your script.
+  # Example: "{'net_arch': [64, 64]}" means two hidden layers with 64 neurons each.
+  policy_kwargs: "{'net_arch': [64, 64]}"
+  # Other options: "{'net_arch': [dict(pi=[128, 128], vf=[128, 128])]}" for separate actor/critic nets.
+
+
+# 4. BINANCE DATA SETTINGS
+#    Configuration for fetching historical market data from Binance (REST API).
+#    Used by `utils.py` for training and evaluation data preparation.
+binance_settings:
+  # Default trading pair symbol (e.g., "BTCUSDT", "ETHUSDT").
+  default_symbol: "BTCUSDT"
+
+  # Interval for K-line data (e.g., "1m", "5m", "1h", "1d", "1w", etc.).
+  # Must be a valid Binance interval.
+  historical_interval: "1h"
+
+  # Local directory where fetched historical data (K-lines and ticks) will be cached.
+  # This prevents re-downloading data on subsequent runs.
+  historical_cache_dir: "./binance_data_cache/"
+
+  # Start date for fetching historical K-line data (YYYY-MM-DD).
+  # Used for training/backtesting.
+  start_date_kline_data: "2024-01-01"
+  # End date for fetching historical K-line data (YYYY-MM-DD, inclusive).
+  end_date_kline_data: "2024-01-03"
+
+  # Start date and time for fetching historical tick data (YYYY-MM-DD HH:MM:SS).
+  # Tick data is very granular, so keep periods shorter.
+  start_date_tick_data: "2024-01-01 00:00:00"
+  # End date and time for fetching historical tick data (YYYY-MM-DD HH:MM:SS, inclusive).
+  end_date_tick_data: "2024-01-03 00:00:00"
+
+  # Your Binance API Key. It's highly recommended to use environment variables
+  # (e.g., `BINANCE_API_KEY`) and set this to `null` or omit it in the config file.
+  api_key: YOUR_API_KEY_HERE # REMEMBER TO REPLACE THIS OR USE ENV VARS
+
+  # Your Binance API Secret. Similarly, use environment variables (`BINANCE_API_SECRET`).
+  api_secret: YOUR_API_SECRET_HERE # REMEMBER TO REPLACE THIS OR USE ENV VARS
+
+  # Whether to use the Binance Testnet (`true`) or Mainnet (`false`).
+  # CRITICAL for safe development and testing of live trading functionality.
+  testnet: false
+
+  # Delay (in seconds) between consecutive REST API requests.
+  # Helps to avoid hitting Binance API rate limits.
+  api_request_delay_seconds: 0.2
+
+  # File format for caching historical data.
+  # "parquet" is generally recommended for performance and smaller file sizes.
+  # Options: "parquet", "csv".
+  cache_file_type: "parquet"
+
+
+# 5. BINANCE WEBSOCKET SETTINGS
+#    Configuration for connecting to real-time market data streams via WebSockets.
+#    Used by `live_trader.py`.
+binance_websocket:
+  # Mainnet WebSocket URI for spot market streams.
+  uri: "wss://stream.binance.com:9443/ws"
+
+  # Mainnet WebSocket symbol for aggregate trade stream.
+  # Format: <symbol>@aggTrade (e.g., "btcusdt@aggTrade").
+  symbol: "btcusdt@aggTrade"
+
+  # Testnet WebSocket URI for spot market streams.
+  testnet_uri: "wss://testnet.binance.vision/ws"
+
+  # Testnet WebSocket symbol for aggregate trade stream.
+  testnet_symbol: "btcusdt@aggTrade"
+
+
+# 6. BINANCE API CLIENT SETTINGS
+#    Configuration for Binance REST API client for actual trade execution.
+#    Used by `live_trader.py`.
+binance_api_client:
+  # Timeout (in seconds) for REST API calls. Prevents requests from hanging indefinitely.
+  timeout_seconds: 10
+
+  # `recvWindow` parameter for Binance API requests (in milliseconds).
+  # Helps prevent timestamp errors if client clock is out of sync with server.
+  # Default is 5000ms. Increase if you see timestamp errors (e.g., -1021).
+  recv_window_ms: 5000
+
+
+# 7. EVALUATION DATA SETTINGS
+#    Date ranges for historical data used specifically during model evaluation.
+#    It's crucial to use a period *different* from your training data to assess generalization.
+evaluation_data:
+  # Start date for K-line data during evaluation (YYYY-MM-DD).
+  start_date_kline_eval: "2024-01-04"
+  # End date for K-line data during evaluation (YYYY-MM-DD, inclusive).
+  end_date_kline_eval: "2024-01-05"
+
+  # Start date and time for tick data during evaluation (YYYY-MM-DD HH:MM:SS).
+  start_date_tick_eval: "2024-01-04 00:00:00"
+  # End date and time for tick data during evaluation (YYYY-MM-DD HH:MM:SS, inclusive).
+  end_date_tick_eval: "2024-01-05 00:00:00"
+
+  # --- Evaluation Script Specific Parameters ---
+  # Number of episodes to run during a single evaluation execution.
+  # n_evaluation_episodes: 3 # Default in evaluate_agent.py
+
+  # Whether the agent's actions during evaluation should be deterministic (no random sampling).
+  # deterministic_prediction: True # Default in evaluate_agent.py
+
+  # Frequency to print step-by-step information to console during evaluation.
+  # print_step_info_freq: 50 # Default in evaluate_agent.py
+
+  # Allows overriding specific environment parameters *just for evaluation*.
+  # This could be useful if you want to test the agent in slightly different
+  # market conditions or with different reward sensitivities without retraining.
+  # environment_overrides:
+    # initial_balance: 15000.0
+    # commission_pct: 0.0015
+
+
+# 8. CONFIGURATION KEYS FOR HASHING
+#    This section defines which parameters, when changed, will result in a
+#    new unique hash for a training run. This is CRITICAL for:
+#    - Organized logging: Each unique config has its own directory.
+#    - Reproducibility: You can always find the exact config a model was trained with.
+#    - Model lookup: `resolve_model_path` uses this hash to find trained models.
+#
+#    If a parameter's change should signify a "new experiment" that yields
+#    a potentially different model, include it here.
+#    If a parameter is just for logging/reporting and doesn't impact model behavior,
+#    you might exclude it (e.g., 'log_level', 'custom_print_render').
+hash_config_keys:
+  environment:
+    - kline_window_size
+    - tick_feature_window_size
+    - initial_balance
+    - commission_pct
+    - base_trade_amount_ratio
+    - catastrophic_loss_threshold_pct
+    - obs_clip_low
+    - obs_clip_high
+    - min_profit_target_low
+    - min_profit_target_high
+    - reward_open_buy_position
+    - penalty_buy_insufficient_balance
+    - penalty_buy_position_already_open
+    - reward_sell_profit_base
+    - reward_sell_profit_factor
+    - penalty_sell_loss_factor
+    - penalty_sell_loss_base
+    - penalty_sell_no_position
+    - reward_hold_profitable_position
+    - penalty_hold_losing_position
+    - penalty_hold_flat_position
+    - penalty_catastrophic_loss
+    - reward_eof_sell_factor
+    - reward_sell_meets_target_bonus
+    - penalty_sell_profit_below_target
+    - kline_price_features # Include this as it defines observation features
+    - tick_features_to_use # Include this as it defines observation features
+
+  ppo_params:
+    - total_timesteps
+    - learning_rate
+    - n_steps
+    - batch_size
+    - n_epochs
+    - gamma
+    - gae_lambda
+    - clip_range
+    - ent_coef
+    - vf_coef
+    - max_grad_norm
+    - target_kl
+    - policy_kwargs # The network architecture significantly changes the model
+
+  binance_settings:
+    - default_symbol
+    - historical_interval
+    # Only include start/end dates if different data periods define different experiments
+    # - start_date_kline_data
+    # - end_date_kline_data
+    # - start_date_tick_data
+    # - end_date_tick_data
+    - testnet # Whether it's trained on testnet data vs. mainnet data
+    - api_request_delay_seconds # Could impact data completeness/quality on fetch
+
+# End of config.yaml
