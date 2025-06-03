@@ -8,7 +8,8 @@ import json
 import hashlib
 from datetime import datetime, timezone, timedelta
 import time
-import talib # Add this import for TA-Lib
+from tqdm.auto import tqdm # Import tqdm for general progress bars
+import talib 
 
 try:
     from binance.client import Client
@@ -210,14 +211,16 @@ def fetch_and_cache_kline_data(
 
     if log_level in ["normal", "detailed"]:
         print(f"Fetching K-line data for {symbol}, Interval: {interval}, From: {start_date_str}, To: {end_date_str}")
-
+    
     client = Client(api_key or os.environ.get('BINANCE_API_KEY'), 
                     api_secret or os.environ.get('BINANCE_API_SECRET'), 
                     testnet=testnet)
     if testnet: client.API_URL = 'https://testnet.binance.vision/api'
 
     try:
+        # Removed BarSpinner as it caused ModuleNotFoundError; basic print is sufficient for single call
         klines_raw = client.get_historical_klines(symbol, interval, start_date_str, end_str=end_date_str)
+
         if not klines_raw:
             if log_level != "none": print(f"No k-lines returned for {symbol} {start_date_str}-{end_date_str}.")
             return pd.DataFrame()
@@ -300,8 +303,20 @@ def fetch_continuous_aggregate_trades(
     start_dt = pd.to_datetime(start_date_str, utc=True)
     end_dt = pd.to_datetime(end_date_str, utc=True)
     
-    current_start_ms = int(start_dt.timestamp() * 1000)
+    initial_start_ms = int(start_dt.timestamp() * 1000)
+    current_start_ms = initial_start_ms
     end_ms = int(end_dt.timestamp() * 1000)
+
+    total_duration_ms = end_ms - initial_start_ms
+    if total_duration_ms <= 0:
+        if log_level != "none": print(f"Invalid or zero duration date range: {start_date_str} to {end_date_str}")
+        return pd.DataFrame()
+
+    pbar = None
+    if log_level in ["normal", "detailed"]:
+        # Total is the full duration of the fetch period in milliseconds
+        pbar = tqdm(total=total_duration_ms, desc=f"Fetching {symbol} trades", unit="ms", unit_scale=True, disable=(log_level == "none"), leave=False)
+
 
     while True:
         try:
@@ -330,16 +345,26 @@ def fetch_continuous_aggregate_trades(
                 else:
                     break
 
+            if pbar:
+                # Calculate current progress in milliseconds
+                current_pbar_pos = current_start_ms - initial_start_ms
+                pbar.n = min(current_pbar_pos, total_duration_ms) # Ensure current position doesn't exceed total
+                pbar.set_postfix_str(f"Trades: {len(all_trades)}")
+                pbar.refresh()
+
             if current_start_ms >= end_ms:
+                if pbar: pbar.close() # Close progress bar when done
                 break
             
             time.sleep(api_request_delay_seconds)
 
         except BinanceAPIException as bae:
+            if pbar: pbar.close() # Close pbar on error
             print(f"Binance API Exception during aggregate trade fetch: {bae.code} - {bae.message}. Retrying or stopping...")
             time.sleep(api_request_delay_seconds * 5)
             break 
         except Exception as e:
+            if pbar: pbar.close() # Close pbar on error
             print(f"Error fetching aggregate trades: {e}")
             traceback.print_exc()
             break
@@ -561,7 +586,7 @@ if __name__ == '__main__':
             print(f"Aggregate trades fetch successful. Shape: {agg_trades_df.shape}, Columns: {agg_trades_df.columns.tolist()}")
             print("Agg Trades Head:\n", agg_trades_df.head())
         else:
-            print("Aggregate trades fetch FAILED or returned empty DataFrame.")
+            print("Agg Trades fetch FAILED or returned empty DataFrame.")
             print("Note: For aggregate trades, ensure the test period has trading activity on Binance Testnet (if used) or Mainnet.")
 
     else:
