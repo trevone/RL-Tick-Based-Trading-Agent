@@ -8,7 +8,7 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import time # Import time module for sleep (still useful for general delays)
-from tqdm import tqdm # NEW: Import tqdm for progress bar
+# Removed: from tqdm import tqdm # NEW: Import tqdm for progress bar
 
 # Import the necessary functions from your updated utils.py and check_tick_cache.py
 from src.data.utils import fetch_and_cache_tick_data, get_data_path_for_day, fetch_and_cache_kline_data, DATA_CACHE_DIR
@@ -26,75 +26,74 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
     total_days = (end_date_range - start_date_range).days + 1
     
     current_date = start_date_range
-    # NEW: Wrap the date iteration with tqdm for a progress bar
-    with tqdm(total=total_days, desc=f"Downloading {symbol} agg_trades", unit="day") as pbar:
-        while current_date <= end_date_range:
-            date_str_for_file = current_date.strftime('%Y-%m-%d')
+    # Removed: with tqdm(total=total_days, desc=f"Downloading {symbol} agg_trades", unit="day") as pbar:
+    while current_date <= end_date_range:
+        date_str_for_file = current_date.strftime('%Y-%m-%d')
 
-            day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
-            day_end_dt_utc = datetime.combine(current_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) - timedelta(microseconds=1)
+        day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
+        day_end_dt_utc = datetime.combine(current_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) - timedelta(microseconds=1)
 
-            start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-            end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+        end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-            file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="agg_trades")
+        file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="agg_trades")
 
-            pbar.set_description(f"Processing {symbol} {date_str_for_file}") # Update description for current day
+        print(f"Processing {symbol} {date_str_for_file}") # Modified to print directly
 
-            data_fetched = None # Initialize to None for the current day's processing
-            
-            # 1. Check if the parquet file for the day already exists and is not empty/corrupt
-            if os.path.exists(file_path):
-                try:
-                    temp_df = pd.read_parquet(file_path)
-                    if not temp_df.empty:
-                        pbar.write(f"  File already exists: {file_path}. Skipping download.")
-                        data_fetched = temp_df # Indicate data is available from existing file
-                    else:
-                        pbar.write(f"  Warning: Existing file {file_path} is empty. Attempting to re-download.")
-                        os.remove(file_path) # Remove empty file to force re-download
-                except Exception as e:
-                    pbar.write(f"  Error reading existing file {file_path}: {e}. Attempting to re-download.")
-                    if os.path.exists(file_path):
-                        os.remove(file_path) # Remove corrupt file to force re-download
+        data_fetched = None # Initialize to None for the current day's processing
+        
+        # 1. Check if the parquet file for the day already exists and is not empty/corrupt
+        if os.path.exists(file_path):
+            try:
+                temp_df = pd.read_parquet(file_path)
+                if not temp_df.empty:
+                    print(f"  File already exists: {file_path}. Skipping download.") # Modified to print directly
+                    data_fetched = temp_df # Indicate data is available from existing file
+                else:
+                    print(f"  Warning: Existing file {file_path} is empty. Attempting to re-download.") # Modified to print directly
+                    os.remove(file_path) # Remove empty file to force re-download
+            except Exception as e:
+                print(f"  Error reading existing file {file_path}: {e}. Attempting to re-download.") # Modified to print directly
+                if os.path.exists(file_path):
+                    os.remove(file_path) # Remove corrupt file to force re-download
 
-            # If no valid existing file was found, attempt download
-            if data_fetched is None or data_fetched.empty:
-                pbar.write(f"  File not found or invalid. Attempting to download and cache data...")
-                try:
-                    data_fetched = fetch_and_cache_tick_data(symbol, start_datetime_str_for_api, end_datetime_str_for_api)
-                    
-                    if data_fetched is not None and not data_fetched.empty:
-                        pbar.write(f"  Successfully downloaded and cached data to {file_path}.")
-                    else:
-                        pbar.write(f"  No data returned by API for {symbol} on {date_str_for_file} ({start_datetime_str_for_api} to {end_datetime_str_for_api}). File not created or is empty.")
-                        current_date += timedelta(days=1)
-                        pbar.update(1) # Update progress even if no data for the day
-                        continue # Skip validation if no data was fetched or file is empty
-
-                except Exception as e:
-                    pbar.write(f"  Error downloading data for {symbol} on {date_str_for_file}: {e}")
+        # If no valid existing file was found, attempt download
+        if data_fetched is None or data_fetched.empty:
+            print(f"  File not found or invalid. Attempting to download and cache data...") # Modified to print directly
+            try:
+                data_fetched = fetch_and_cache_tick_data(symbol, start_datetime_str_for_api, end_datetime_str_for_api)
+                
+                if data_fetched is not None and not data_fetched.empty:
+                    print(f"  Successfully downloaded and cached data to {file_path}.") # Modified to print directly
+                else:
+                    print(f"  No data returned by API for {symbol} on {date_str_for_file} ({start_datetime_str_for_api} to {end_datetime_str_for_api}). File not created or is empty.") # Modified to print directly
                     current_date += timedelta(days=1)
-                    pbar.update(1) # Update progress even on error
-                    continue
+                    # Removed: pbar.update(1) # Update progress even if no data for the day
+                    continue # Skip validation if no data was fetched or file is empty
 
-            # 2. Proceed with validation ONLY if data_fetched is not None and not empty.
-            if data_fetched is not None and not data_fetched.empty:
-                pbar.write(f"  Validating data for {symbol} on {date_str_for_file}...")
-                try:
-                    # MODIFIED: Pass log_level='none' to suppress verbose validation output
-                    is_valid, message = validate_daily_data(file_path, log_level='none') # MODIFIED
-                    if is_valid:
-                        pbar.write(f"  Validation successful: {message}")
-                    else:
-                        pbar.write(f"  Validation failed: {message}")
-                except Exception as e:
-                    pbar.write(f"  Error during validation for {symbol} on {date_str_for_file}: {e}")
-            else:
-                pbar.write(f"  Validation skipped for {symbol} on {date_str_for_file} as no valid DataFrame was obtained.")
+            except Exception as e:
+                print(f"  Error downloading data for {symbol} on {date_str_for_file}: {e}") # Modified to print directly
+                current_date += timedelta(days=1)
+                # Removed: pbar.update(1) # Update progress even on error
+                continue
 
-            current_date += timedelta(days=1)
-            pbar.update(1) # Update progress for the current day
+        # 2. Proceed with validation ONLY if data_fetched is not None and not empty.
+        if data_fetched is not None and not data_fetched.empty:
+            print(f"  Validating data for {symbol} on {date_str_for_file}...") # Modified to print directly
+            try:
+                # MODIFIED: Pass log_level='none' to suppress verbose validation output
+                is_valid, message = validate_daily_data(file_path, log_level='none') # MODIFIED
+                if is_valid:
+                    print(f"  Validation successful: {message}") # Modified to print directly
+                else:
+                    print(f"  Validation failed: {message}") # Modified to print directly
+            except Exception as e:
+                print(f"  Error during validation for {symbol} on {date_str_for_file}: {e}") # Modified to print directly
+        else:
+            print(f"  Validation skipped for {symbol} on {date_str_for_file} as no valid DataFrame was obtained.") # Modified to print directly
+
+        current_date += timedelta(days=1)
+        # Removed: pbar.update(1) # Update progress for the current day
     print("\nAggregate trades data management process completed.")
 
 
@@ -110,83 +109,82 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
     total_days = (end_date_range - start_date_range).days + 1
 
     current_date = start_date_range
-    # NEW: Wrap the date iteration with tqdm for a progress bar
-    with tqdm(total=total_days, desc=f"Downloading {symbol} klines ({interval})", unit="day") as pbar:
-        while current_date <= end_date_range:
-            date_str_for_file = current_date.strftime('%Y-%m-%d')
+    # Removed: with tqdm(total=total_days, desc=f"Downloading {symbol} klines ({interval})", unit="day") as pbar:
+    while current_date <= end_date_range:
+        date_str_for_file = current_date.strftime('%Y-%m-%d')
 
-            # For Klines, start and end time within the day
-            day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
-            day_end_dt_utc = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.utc) # Max time for kline end
+        # For Klines, start and end time within the day
+        day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
+        day_end_dt_utc = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.utc) # Max time for kline end
 
-            start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-            end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S") # Klines API uses full second resolution
+        start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+        end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S") # Klines API uses full second resolution
 
-            file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="kline", 
-                                            interval=interval, price_features_to_add=price_features_to_add)
+        file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="kline", 
+                                        interval=interval, price_features_to_add=price_features_to_add)
 
-            pbar.set_description(f"Processing {symbol} {date_str_for_file} {interval}") # Update description
+        print(f"Processing {symbol} {date_str_for_file} {interval}") # Modified to print directly
 
-            data_fetched = None
-            
-            # 1. Check if the parquet file for the day already exists and is not empty/corrupt
-            if os.path.exists(file_path):
-                try:
-                    temp_df = pd.read_parquet(file_path)
-                    if not temp_df.empty:
-                        pbar.write(f"  File already exists: {file_path}. Skipping download.")
-                        data_fetched = temp_df
-                    else:
-                        pbar.write(f"  Warning: Existing file {file_path} is empty. Attempting to re-download.")
-                        os.remove(file_path)
-                except Exception as e:
-                    pbar.write(f"  Error reading existing file {file_path}: {e}. Attempting to re-download.")
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
+        data_fetched = None
+        
+        # 1. Check if the parquet file for the day already exists and is not empty/corrupt
+        if os.path.exists(file_path):
+            try:
+                temp_df = pd.read_parquet(file_path)
+                if not temp_df.empty:
+                    print(f"  File already exists: {file_path}. Skipping download.") # Modified to print directly
+                    data_fetched = temp_df
+                else:
+                    print(f"  Warning: Existing file {file_path} is empty. Attempting to re-download.") # Modified to print directly
+                    os.remove(file_path)
+            except Exception as e:
+                print(f"  Error reading existing file {file_path}: {e}. Attempting to re-download.") # Modified to print directly
+                if os.path.exists(file_path):
+                    os.remove(file_path)
 
-            # If no valid existing file was found, attempt download
-            if data_fetched is None or data_fetched.empty:
-                pbar.write(f"  File not found or invalid. Attempting to download and cache K-line data...")
-                try:
-                    data_fetched = fetch_and_cache_kline_data(
-                        symbol=symbol,
-                        interval=interval,
-                        start_date_str=start_datetime_str_for_api,
-                        end_date_str=end_datetime_str_for_api,
-                        cache_dir=DATA_CACHE_DIR, # Use DATA_CACHE_DIR from src.data.utils
-                        price_features_to_add=price_features_to_add
-                    )
-                    
-                    if data_fetched is not None and not data_fetched.empty:
-                        pbar.write(f"  Successfully downloaded and cached K-line data to {file_path}.")
-                    else:
-                        pbar.write(f"  No K-line data returned by API for {symbol} on {date_str_for_file} for interval {interval}. File not created or is empty.")
-                        current_date += timedelta(days=1)
-                        pbar.update(1) # Update progress even if no data for the day
-                        continue
-                except Exception as e:
-                    pbar.write(f"  Error downloading K-line data for {symbol} on {date_str_for_file}: {e}")
+        # If no valid existing file was found, attempt download
+        if data_fetched is None or data_fetched.empty:
+            print(f"  File not found or invalid. Attempting to download and cache K-line data...") # Modified to print directly
+            try:
+                data_fetched = fetch_and_cache_kline_data(
+                    symbol=symbol,
+                    interval=interval,
+                    start_date_str=start_datetime_str_for_api,
+                    end_date_str=end_datetime_str_for_api,
+                    cache_dir=DATA_CACHE_DIR, # Use DATA_CACHE_DIR from src.data.utils
+                    price_features_to_add=price_features_to_add
+                )
+                
+                if data_fetched is not None and not data_fetched.empty:
+                    print(f"  Successfully downloaded and cached K-line data to {file_path}.") # Modified to print directly
+                else:
+                    print(f"  No K-line data returned by API for {symbol} on {date_str_for_file} for interval {interval}. File not created or is empty.") # Modified to print directly
                     current_date += timedelta(days=1)
-                    pbar.update(1) # Update progress even on error
+                    # Removed: pbar.update(1) # Update progress even if no data for the day
                     continue
+            except Exception as e:
+                print(f"  Error downloading K-line data for {symbol} on {date_str_for_file}: {e}") # Modified to print directly
+                current_date += timedelta(days=1)
+                # Removed: pbar.update(1) # Update progress even on error
+                continue
 
-            # 2. Proceed with validation ONLY if data_fetched is not None and not empty.
-            if data_fetched is not None and not data_fetched.empty:
-                pbar.write(f"  Validating K-line data for {symbol} on {date_str_for_file}...")
-                try:
-                    # MODIFIED: Pass log_level='none' to suppress verbose validation output
-                    is_valid, message = validate_daily_data(file_path, log_level='none') # MODIFIED
-                    if is_valid:
-                        pbar.write(f"  Validation successful: {message}")
-                    else:
-                        pbar.write(f"  Validation failed: {message}")
-                except Exception as e:
-                    pbar.write(f"  Error during validation for {symbol} on {date_str_for_file}: {e}")
-            else:
-                pbar.write(f"  Validation skipped for {symbol} on {date_str_for_file} as no valid DataFrame was obtained.")
+        # 2. Proceed with validation ONLY if data_fetched is not None and not empty.
+        if data_fetched is not None and not data_fetched.empty:
+            print(f"  Validating K-line data for {symbol} on {date_str_for_file}...") # Modified to print directly
+            try:
+                # MODIFIED: Pass log_level='none' to suppress verbose validation output
+                is_valid, message = validate_daily_data(file_path, log_level='none') # MODIFIED
+                if is_valid:
+                    print(f"  Validation successful: {message}") # Modified to print directly
+                else:
+                    print(f"  Validation failed: {message}") # Modified to print directly
+            except Exception as e:
+                print(f"  Error during validation for {symbol} on {date_str_for_file}: {e}") # Modified to print directly
+        else:
+            print(f"  Validation skipped for {symbol} on {date_str_for_file} as no valid DataFrame was obtained.") # Modified to print directly
 
-            current_date += timedelta(days=1)
-            pbar.update(1) # Update progress for the current day
+        current_date += timedelta(days=1)
+        # Removed: pbar.update(1) # Update progress for the current day
     print("\nK-line data management process completed.")
 
 

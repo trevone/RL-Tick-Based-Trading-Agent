@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 import time
 from typing import Union, List, Dict
 import re
+from tqdm import tqdm # NEW: Import tqdm for progress bar
 
 try:
     from binance.client import Client
@@ -318,7 +319,7 @@ def fetch_continuous_aggregate_trades(
             return pd.DataFrame()
 
     if log_level in ["normal", "detailed"]:
-        print(f"\nFetching continuous aggregate trades for {symbol} from {start_date_str} to {end_date_str}.")
+        print(f"Fetching continuous aggregate trades for {symbol} from {start_date_str} to {end_date_str}.")
 
     client = Client(api_key or os.environ.get('BINANCE_API_KEY'), 
                     api_secret or os.environ.get('BINANCE_API_SECRET'), 
@@ -332,46 +333,59 @@ def fetch_continuous_aggregate_trades(
     current_start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
 
-    while True:
-        try:
-            if log_level == "detailed":
-                print(f"  Fetching agg trades. Current start_ms: {current_start_ms}")
+    total_duration_ms = end_ms - current_start_ms
+    # Ensure total_duration_ms is at least 1 to avoid tqdm issues with total=0
+    if total_duration_ms <= 0:
+        total_duration_ms = 1 # For very short or instantaneous intervals
 
-            chunk_end_ms = min(current_start_ms + (60 * 60 * 1000 - 1), end_ms)
+    # NEW: Wrap the fetching loop with tqdm tracking milliseconds
+    with tqdm(total=total_duration_ms, desc=f"Fetching {symbol} trades for {daily_file_date_str}", unit="ms", unit_scale=True, unit_divisor=1000) as pbar: # unit_scale for M, G etc.
+        # Initialize pbar.n if starting from a non-zero time (though usually current_start_ms is start_dt for daily fetches)
+        pbar.n = current_start_ms - int(start_dt.timestamp() * 1000)
+        
+        while True:
+            old_current_start_ms = current_start_ms # Track for update amount
 
-            if log_level == "detailed": print(f"    Fetching chunk: Start {datetime.fromtimestamp(current_start_ms/1000, tz=timezone.utc)}, End {datetime.fromtimestamp(chunk_end_ms/1000, tz=timezone.utc)}")
+            try:
+                # Fetch 1 hour chunks (less 1ms for strict hourly boundary)
+                chunk_end_ms = min(current_start_ms + (60 * 60 * 1000 - 1), end_ms)
 
-            trades_chunk = client.get_aggregate_trades(
-                symbol=symbol, 
-                startTime=current_start_ms,
-                endTime=chunk_end_ms,
-                limit=1000
-            )
-            
-            if trades_chunk:
-                all_trades.extend(trades_chunk)
-                current_start_ms = trades_chunk[-1]['T'] + 1 
-                if log_level == "detailed": print(f"    Fetched {len(trades_chunk)} trades in chunk. New start_ms: {current_start_ms}")
-            else:
-                if current_start_ms < end_ms:
-                     current_start_ms = chunk_end_ms + 1
-                     if log_level == "detailed": print(f"    No trades in chunk, advancing window. New start_ms: {current_start_ms}")
+                trades_chunk = client.get_aggregate_trades(
+                    symbol=symbol, 
+                    startTime=current_start_ms,
+                    endTime=chunk_end_ms,
+                    limit=1000
+                )
+                
+                if trades_chunk:
+                    all_trades.extend(trades_chunk)
+                    # Advance to the timestamp of the last trade + 1ms
+                    current_start_ms = trades_chunk[-1]['T'] + 1
                 else:
-                    break
-            
-            if current_start_ms >= end_ms:
-                break
-            
-            time.sleep(api_request_delay_seconds)
+                    # If no trades, advance by the chunk size (1 hour) to avoid infinite loop on empty periods
+                    current_start_ms = chunk_end_ms + 1
 
-        except BinanceAPIException as bae:
-            print(f"Binance API Exception during aggregate trade fetch: {bae.code} - {bae.message}. Retrying or stopping...")
-            time.sleep(api_request_delay_seconds * 5)
-            break 
-        except Exception as e:
-            print(f"Error fetching aggregate trades: {e}")
-            traceback.print_exc()
-            break
+                # Update progress bar by the actual milliseconds advanced
+                pbar.update(current_start_ms - old_current_start_ms) # This is the key change
+
+                if current_start_ms >= end_ms:
+                    break
+                
+                time.sleep(api_request_delay_seconds)
+
+            except BinanceAPIException as bae:
+                pbar.write(f"Binance API Exception during aggregate trade fetch: {bae.code} - {bae.message}. Retrying or stopping...")
+                time.sleep(api_request_delay_seconds * 5)
+                break 
+            except Exception as e:
+                pbar.write(f"Error fetching aggregate trades: {e}")
+                traceback.print_exc()
+                break
+
+    # Ensure pbar is closed (done by `with` statement) and possibly updated to full if loop exited early due to break
+    pbar.total = total_duration_ms # Ensure total is correct after loop if it was modified
+    pbar.n = total_duration_ms # Ensure n is also total_duration_ms for completion
+    pbar.refresh() # Force refresh for final state
 
     if not all_trades:
         if log_level != "none": print(f"No aggregate trades returned for {symbol} {start_date_str}-{end_date_str}.")
