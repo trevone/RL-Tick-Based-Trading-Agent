@@ -8,10 +8,10 @@ binance_settings:
   historical_cache_dir: "data_cache/" # Directory to store cached historical data (relative to project root)
 
   # Default date ranges for initial data loading (for train_agent.py, can be overridden by config.yaml)
-  start_date_kline_data: "2024-01-01 00:00:00" # Start date for kline historical data download (YYYY-MM-DD HH:MM:SS)
-  end_date_kline_data: "2024-01-03 00:00:00"   # End date for kline historical data download (YYYY-MM-DD HH:MM:SS)
-  start_date_tick_data: "2024-01-01 00:00:00" # Start datetime for tick historical data download (YYYY-MM-DD HH:MM:SS)
-  end_date_tick_data: "2024-01-03 00:00:00"   # End datetime for tick historical data download (YYYY-MM-DD HH:MM:SS)
+  start_date_kline_data: "2025-01-01 00:00:00" # Start date for kline historical data download (YYYY-MM-DD HH:MM:SS)
+  end_date_kline_data: "2025-01-02 00:00:00"   # End date for kline historical data download (YYYY-MM-DD HH:MM:SS)
+  start_date_tick_data: "2025-01-01 00:00:00" # Start datetime for tick historical data download (YYYY-MM-DD HH:MM:SS)
+  end_date_tick_data: "2025-01-02 00:00:00"   # End datetime for tick historical data download (YYYY-MM-DD HH:MM:SS)
 
   api_request_delay_seconds: 0.2      # Delay between consecutive API requests to avoid rate limits
   log_level: "normal"                 # Log level for Binance API interactions: "none", "normal", "detailed"
