@@ -1,7 +1,7 @@
 # data_downloader_manager.py
 
 #python data_downloader_manager.py --start_date 2025-04-01 --end_date 2025-06-02 --symbol BTCUSDT
-#python data_downloader_manager.py --start_date 2025-05-01 --end_date 2025-05-02 --symbol BTCUSDT --data_type kline --interval 1h --kline_features Open High Low Close Volume SMA_20 RSI_14
+#python data_downloader_manager.py --start_date 2025-05-01 --end_date 2025-05-02 --symbol BTCUSDT --data_type kline --interval 1h --kline_features Close Volume
 
 import argparse
 import os
