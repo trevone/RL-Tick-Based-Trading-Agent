@@ -12,7 +12,7 @@ from src.agents.evaluate_agent import main as evaluate_agent_main
 from src.agents.evaluate_agent import plot_performance # Also test plot_performance directly
 
 # Import necessary SB3 components for mocking
-from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv # Import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO, SAC, DDPG, A2C # For type hinting or specific mocking
 
@@ -30,15 +30,15 @@ def mock_config_dir(tmp_path):
     (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n  initial_balance: 10000.0\n")
     (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  default_symbol: 'BTCUSDT'\n  historical_interval: '1h'\n  historical_cache_dir: 'data_cache/'\n")
     
-    # Corrected evaluation_data.yaml content for the mock
+    # Corrected evaluation_data.yaml content for the mock with full datetime strings
     (defaults_dir / "evaluation_data.yaml").write_text("""
 evaluation_data:
   start_date_eval: '2024-01-01 00:00:00'
-  end_date_eval: '2024-01-01 23:59:59'
+  end_date_eval: '2024-01-01 23:59:59' # Use end of day for tick data to get all ticks on the day
   start_date_kline_eval: '2024-01-01 00:00:00'
   end_date_kline_eval: '2024-01-01 23:59:59'
   start_date_tick_eval: '2024-01-01 00:00:00'
-  end_date_tick_eval: '2024-01-01 23:59:59' # Use end of day for tick data
+  end_date_tick_eval: '2024-01-01 23:59:59' 
   n_evaluation_episodes: 1
 """)
     (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size']\n  agent_params:\n    PPO: ['learning_rate']\n  binance_settings: ['default_symbol']\n")

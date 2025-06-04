@@ -24,8 +24,10 @@ def mock_config_dir(tmp_path):
     (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n")
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.001\n  total_timesteps: 100\n  policy_kwargs: \"{'net_arch': [32]}\"\n")
     (defaults_dir / "sac_params.yaml").write_text("sac_params:\n  learning_rate: 0.0005\n  total_timesteps: 50\n")
-    (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  default_symbol: 'BTCUSDT'\n  historical_interval: '1h'\n  historical_cache_dir: 'data_cache/'\n  start_date_kline_data: '2024-01-01'\n  end_date_kline_data: '2024-01-01'\n  start_date_tick_data: '2024-01-01 00:00:00'\n  end_date_tick_data: '2024-01-01 00:00:00'\n")
-    (defaults_dir / "evaluation_data.yaml").write_text("evaluation_data:\n  start_date_eval: '2024-01-02'\n  end_date_eval: '2024-01-02'\n")
+    # Corrected binance_settings.yaml content with full datetime strings
+    (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  default_symbol: 'BTCUSDT'\n  historical_interval: '1h'\n  historical_cache_dir: 'data_cache/'\n  start_date_kline_data: '2024-01-01 00:00:00'\n  end_date_kline_data: '2024-01-01 23:59:59'\n  start_date_tick_data: '2024-01-01 00:00:00'\n  end_date_tick_data: '2024-01-01 23:59:59'\n")
+    # Corrected evaluation_data.yaml content with full datetime strings
+    (defaults_dir / "evaluation_data.yaml").write_text("evaluation_data:\n  start_date_eval: '2024-01-02 00:00:00'\n  end_date_eval: '2024-01-02 23:59:59'\n")
     (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size']\n  agent_params:\n    PPO: ['learning_rate']\n    SAC: ['learning_rate']\n  binance_settings: ['default_symbol']\n")
 
     # Create dummy main config.yaml in the root tmp_path

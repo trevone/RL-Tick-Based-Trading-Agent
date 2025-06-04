@@ -2,10 +2,10 @@
 evaluation_data:
   # Date range for evaluation data used by EvalCallback and evaluate_agent.py
   # These are distinct from training data dates to test generalization.
-  start_date_eval: "2024-01-04"             # Start date for evaluation period (YYYY-MM-DD)
-  end_date_eval: "2024-01-04"               # End date for evaluation period (YYYY-MM-DD)
-  start_date_kline_eval: "2024-01-04"       # Specific start date for kline eval data
-  end_date_kline_eval: "2024-01-04"         # Specific end date for kline eval data
+  start_date_eval: "2024-01-04 00:00:00"             # Start date for evaluation period (YYYY-MM-DD HH:MM:SS)
+  end_date_eval: "2024-01-04 00:00:00"               # End date for evaluation period (YYYY-MM-DD HH:MM:SS)
+  start_date_kline_eval: "2024-01-04 00:00:00"       # Specific start date for kline eval data
+  end_date_kline_eval: "2024-01-04 00:00:00"         # Specific end date for kline eval data
   start_date_tick_eval: "2024-01-04 00:00:00" # Specific start datetime for tick eval data
   end_date_tick_eval: "2024-01-04 00:00:00"   # Specific end datetime for tick eval data
 

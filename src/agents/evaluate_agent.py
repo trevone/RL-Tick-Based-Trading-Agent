@@ -22,7 +22,7 @@ except ImportError:
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
 from stable_baselines3.common.monitor import Monitor # For wrapping the environment to get episode info
-from stable_baselines3.common.vec_env import VecNormalize # Import VecNormalize for observation standardization
+from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv # Import VecNormalize for observation standardization, and DummyVecEnv
 
 # Import custom modules from the project's new structure
 from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
@@ -284,6 +284,9 @@ def main():
         # Apply the FlattenAction wrapper
         wrapped_eval_env = FlattenAction(base_eval_env)
         
+        # Wrap the single environment in a DummyVecEnv before passing to VecNormalize
+        vec_wrapped_eval_env = DummyVecEnv([lambda: wrapped_eval_env]) # Corrected line
+        
         # Load VecNormalize statistics from the training run's log directory
         # The model's path is something like logs/training/<HASH_MODELNAME>/best_model/best_model.zip
         # So the VecNormalize stats are in logs/training/<HASH_MODELNAME>/vec_normalize.pkl
@@ -292,7 +295,8 @@ def main():
         
         # Instantiate VecNormalize. norm_reward=False for this env.
         # clip_obs must be consistent with training (typically 10.0 or from SB3 defaults)
-        eval_env_normalized = VecNormalize(wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.)
+        # Pass vec_wrapped_eval_env to VecNormalize
+        eval_env_normalized = VecNormalize(vec_wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.) # Corrected line
         
         if os.path.exists(vec_normalize_stats_path):
             eval_env_normalized = VecNormalize.load(vec_normalize_stats_path, eval_env_normalized) # Load stats into the new instance
@@ -358,7 +362,7 @@ def main():
         
         # Access initial_balance from the unwrapped SimpleTradingEnv instance
         # This is complex due to multiple wrappers: VecNormalize -> Monitor -> FlattenAction -> SimpleTradingEnv
-        base_env_instance = eval_env.venv.envs[0].env.env # For Monitor(VecNormalize(FlattenAction(SimpleTradingEnv)))
+        base_env_instance = eval_env.venv.envs[0].env.env # For Monitor(VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv))))
         initial_balance_this_episode = base_env_instance.initial_balance
 
         print(f"\n--- Evaluation Episode {episode + 1}/{num_eval_episodes} (Initial Balance: {initial_balance_this_episode:.2f}) ---")

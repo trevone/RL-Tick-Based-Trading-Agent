@@ -31,7 +31,7 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available for live trading.")
 
-from stable_baselines3.common.vec_env import VecNormalize # Crucial for obs normalization
+from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv # Crucial for obs normalization
 
 # Import custom modules from the project's new structure
 from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
@@ -163,8 +163,12 @@ class LiveTrader:
             if self.vec_normalize:
                 # Re-wrap the base environment with VecNormalize, passing the loaded stats
                 # This creates a new VecNormalize instance with the loaded stats
+                base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
+                wrapped_env = FlattenAction(base_env)
+                vec_wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Wrap in DummyVecEnv
+                
                 self.env = VecNormalize(
-                    FlattenAction(SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)), # Dummy env for init
+                    vec_wrapped_env, # Pass the vectorized environment
                     norm_obs=True, norm_reward=False, clip_obs=10.0
                 )
                 self.env = VecNormalize.load(self.vec_normalize_stats_path, self.env)
@@ -174,7 +178,9 @@ class LiveTrader:
                 print("Model env set with loaded VecNormalize.")
             else:
                 # If no VecNormalize stats were loaded, create a simple non-normalized env
-                self.env = FlattenAction(SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config))
+                base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
+                self.env = FlattenAction(base_env) # Just the FlattenAction wrapper
+                # For live trading without VecNormalize, it's ok for the model to use the raw env
                 self.model.set_env(self.env)
                 print("Model env set (no VecNormalize applied).")
 
@@ -371,9 +377,8 @@ class LiveTrader:
         order_response = None
         
         # Access initial_balance from the unwrapped SimpleTradingEnv instance
-        # This is complex due to multiple wrappers: VecNormalize -> Monitor -> FlattenAction -> SimpleTradingEnv
-        # In live mode, we only have SimpleTradingEnv (wrapped by FlattenAction)
-        base_env_instance = self.env.env # For VecNormalize(FlattenAction(SimpleTradingEnv)) -> FlattenAction(SimpleTradingEnv) -> SimpleTradingEnv
+        # This is complex due to multiple wrappers: VecNormalize -> DummyVecEnv -> FlattenAction -> SimpleTradingEnv
+        base_env_instance = self.env.venv.envs[0].env # For VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv)))
         
         if not base_env_instance.position_open and action == 1: # BUY
             # Calculate amount to buy (using a fixed percentage of current balance as in env)
@@ -480,7 +485,13 @@ class LiveTrader:
         try:
             # We need to manually update the env's tick_df and kline_df with real data
             # since it's not a regular VecEnv that recreates itself.
-            base_env_instance = self.env.env
+            # Base env instance can be accessed as self.env.venv.envs[0].env if VecNormalize is used.
+            # If not VecNormalize, it's self.env.env
+            if isinstance(self.env, VecNormalize):
+                base_env_instance = self.env.venv.envs[0].env
+            else: # When no VecNormalize
+                base_env_instance = self.env.env
+            
             base_env_instance.tick_df = self.historical_ticks_for_obs.copy()
             base_env_instance.kline_df_with_ta = self.current_kline_data.copy()
             
@@ -489,7 +500,11 @@ class LiveTrader:
             self.current_obs = initial_obs
             self.env_reset_called = True
             
-            print(f"Live environment reset: Initial Balance: {initial_info[0].get('current_balance'):.2f}, Initial Equity: {initial_info[0].get('equity'):.2f}")
+            initial_balance_from_info = initial_info[0].get('current_balance') if isinstance(initial_info, list) else initial_info.get('current_balance')
+            initial_equity_from_info = initial_info[0].get('equity') if isinstance(initial_info, list) else initial_info.get('equity')
+            
+            print(f"Live environment reset: Initial Balance: {initial_balance_from_info:.2f}, Initial Equity: {initial_equity_from_info:.2f}")
+
         except Exception as e:
             print(f"CRITICAL ERROR: Failed to reset live environment: {e}")
             traceback.print_exc()
@@ -525,6 +540,12 @@ class LiveTrader:
                     last_kline_update_time = datetime.now(timezone.utc)
                 
                 # Update environment's internal dataframes with latest context
+                # Base env instance can be accessed as self.env.venv.envs[0].env if VecNormalize is used.
+                if isinstance(self.env, VecNormalize):
+                    base_env_instance = self.env.venv.envs[0].env
+                else:
+                    base_env_instance = self.env.env
+                
                 base_env_instance.tick_df = self.historical_ticks_for_obs.copy()
                 base_env_instance.kline_df_with_ta = self.current_kline_data.copy()
 
@@ -550,7 +571,8 @@ class LiveTrader:
                     # Reshape for VecNormalize if it's a single observation (1, N)
                     if raw_obs_from_env.ndim == 1:
                         raw_obs_from_env = raw_obs_from_env[np.newaxis, :]
-                    self.current_obs = self.vec_normalize(raw_obs_from_env)
+                    # Use the _normalize_obs method of VecNormalize instance directly
+                    self.current_obs = self.vec_normalize._normalize_obs(raw_obs_from_env)
                     # Squeeze back if it was originally 1D
                     if self.current_obs.shape[0] == 1:
                         self.current_obs = self.current_obs.squeeze(0)

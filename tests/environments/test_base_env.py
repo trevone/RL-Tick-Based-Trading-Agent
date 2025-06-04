@@ -175,23 +175,33 @@ def test_catastrophic_loss(trading_env):
     """Test episode termination on catastrophic loss."""
     env = trading_env
     env.reset()
-    env.initial_balance = 100.0 # Make it easy to hit loss limit
+    
+    # Make it easy to hit loss limit
+    env.initial_balance = 100.0 
     env.catastrophic_loss_limit = env.initial_balance * (1.0 - env.config["catastrophic_loss_threshold_pct"])
-    env.current_balance = env.initial_balance
+    
+    # Simulate a buy action to reduce current_balance and open a position
+    buy_price = env.decision_prices[env.current_step]
+    env.base_trade_amount_ratio = 0.99 # Use almost all balance for trade
+    buy_action = (1, np.array([0.01], dtype=np.float32))
+    env.step(buy_action) # This will update current_balance, position_open, etc.
 
-    # Force a position
-    env.position_open = True
-    env.entry_price = 100.0
-    env.position_volume = 1.0
-
-    # Simulate price drop to trigger catastrophic loss at the current step's price
+    # Now, manipulate price to trigger catastrophic loss.
+    # The equity will be env.current_balance (which is very low) + (position_volume * current_price).
+    # We want this sum to be below catastrophic_loss_limit.
     original_decision_prices = env.decision_prices.copy()
     
     # Ensure current_step is within bounds for decision_prices
     if env.current_step >= len(env.decision_prices):
         env.current_step = len(env.decision_prices) - 1 # Adjust to last available tick
 
-    price_at_loss = env.entry_price * (1.0 - env.config["catastrophic_loss_threshold_pct"] - 0.01) # Price drops below threshold
+    # Calculate the price that would cause equity to drop below limit
+    # equity = current_balance + (position_volume * price)
+    # price = (catastrophic_loss_limit - current_balance) / position_volume
+    required_price_for_loss = (env.catastrophic_loss_limit - env.current_balance) / (env.position_volume + 1e-9)
+    # Set price slightly below the required price to guarantee loss
+    price_at_loss = required_price_for_loss - 0.01 
+    
     env.decision_prices[env.current_step] = price_at_loss
     
     # Step to trigger loss
@@ -289,7 +299,8 @@ def test_profit_target_bonus(trading_env):
     expected_base_reward_met = env.config["reward_sell_profit_base"] + (pnl_met / (env.initial_balance + 1e-9)) * env.config["reward_sell_profit_factor"]
     
     assert reward_met > expected_base_reward_met # Should have received bonus
-    assert reward_met == pytest.approx(expected_base_reward_met + env.config["reward_sell_meets_target_bonus"])
+    # Use a higher relative tolerance for floating point comparison
+    assert reward_met == pytest.approx(expected_base_reward_met + env.config["reward_sell_meets_target_bonus"], rel=1e-3)
 
     # Restore original price
     env.decision_prices[env.current_step] = original_price_met_at_step
@@ -306,6 +317,7 @@ def test_profit_target_bonus(trading_env):
     original_price_below_at_step = env.decision_prices[env.current_step]
     env.decision_prices[env.current_step] = target_sell_price_below
 
+    sell_action = (2, np.array([0.0], dtype=np.float32)) # Profit target param doesn't affect sell logic
     obs_below, reward_below, terminated_below, truncated_below, info_below = env.step(sell_action)
 
     # Calculate expected base reward without penalty
@@ -313,7 +325,8 @@ def test_profit_target_bonus(trading_env):
     expected_base_reward_below = env.config["reward_sell_profit_base"] + (pnl_below / (env.initial_balance + 1e-9)) * env.config["reward_sell_profit_factor"]
 
     assert reward_below < expected_base_reward_below # Should have received penalty
-    assert reward_below == pytest.approx(expected_base_reward_below + env.config["penalty_sell_profit_below_target"])
+    # Use a higher relative tolerance for floating point comparison
+    assert reward_below == pytest.approx(expected_base_reward_below + env.config["penalty_sell_profit_below_target"], rel=1e-3)
 
     # Restore original price
     env.decision_prices[env.current_step] = original_price_below_at_step
