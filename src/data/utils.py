@@ -400,20 +400,22 @@ def fetch_continuous_aggregate_trades(
 # --- UPDATED: Helper for file paths for daily data ---
 def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades", 
                           interval: str = None, price_features_to_add: list = None, 
-                          cache_dir: str = DATA_CACHE_DIR) -> str:
+                          cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None) -> str: # MODIFIED: Added resample_interval_ms
     """
     Generates the expected file path for a single day's data (e.g., aggregate trades or klines).
     Includes interval and features in filename for klines.
+    For agg_trades, can optionally include resampling interval.
     The filename format is simplified to:
     - agg_trades: bn_aggtrades_SYMBOL_YYYY-MM-DD.parquet
+    - agg_trades_resampled: bn_aggtrades_SYMBOL_YYYY-MM-DD_R<interval>ms.parquet
     - kline: bn_klines_SYMBOL_INTERVAL_YYYY-MM-DD_FEATURES.parquet
     """
     os.makedirs(cache_dir, exist_ok=True)
     
     if data_type == "agg_trades":
         filename_prefix = "bn_aggtrades"
-        # Simplified: bn_aggtrades_SYMBOL_YYYY-MM-DD.parquet
-        safe_filename = f"{filename_prefix}_{symbol}_{date_str}.parquet"
+        resample_suffix = f"_R{resample_interval_ms}ms" if resample_interval_ms else "" # NEW: Add resample suffix
+        safe_filename = f"{filename_prefix}_{symbol}_{date_str}{resample_suffix}.parquet" # MODIFIED
     elif data_type == "kline":
         if not interval:
             raise ValueError("Interval must be provided for kline data type.")
@@ -468,31 +470,55 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     """
     Loads tick data (aggregate trades) for a given symbol and date range.
     Checks for and fetches any missing days within the range for training purposes.
-    Optionally performs time-based resampling on the tick data.
+    Optionally performs time-based resampling on the tick data and caches the resampled result.
     """
     if binance_settings is None:
         binance_settings = {} # Use an empty dict if not provided
 
-    # The format string for strptime needs to match the input string exactly.
-    # The start_date_str and end_date_str from binance_settings are 'YYYY-MM-DD HH:MM:SS'.
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S').date()
-    end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S').date() # Corrected format for end_date_str
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S').date()
 
     all_data_frames = []
     current_date = start_date
     while current_date <= end_date:
         date_str = current_date.strftime('%Y-%m-%d')
-        file_path = get_data_path_for_day(date_str, symbol, data_type="agg_trades", cache_dir=cache_dir)
+        
+        file_path_raw = get_data_path_for_day(date_str, symbol, data_type="agg_trades", cache_dir=cache_dir)
+        file_path_resampled = None
+        if tick_resample_interval_ms:
+            file_path_resampled = get_data_path_for_day(date_str, symbol, data_type="agg_trades", cache_dir=cache_dir, resample_interval_ms=tick_resample_interval_ms) # NEW: Get path for resampled file
 
-        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-            if log_level != "none": print(f"Missing or empty data for {symbol} on {date_str}. Attempting to fetch and cache.") # MODIFIED: Conditional print
+        df_daily = pd.DataFrame()
+        
+        # 1. Try to load already resampled data if resampling is enabled
+        if tick_resample_interval_ms and os.path.exists(file_path_resampled):
+            try:
+                # Validate the resampled file
+                from src.data.check_tick_cache import validate_daily_data # Import here to avoid circular
+                is_valid, message = validate_daily_data(file_path_resampled, log_level='none') # Silent validation
+                if is_valid:
+                    df_daily = pd.read_parquet(file_path_resampled)
+                    if log_level != "none": print(f"Loaded resampled tick data from cache: {file_path_resampled}. Shape: {df_daily.shape}")
+                    all_data_frames.append(df_daily)
+                    current_date += timedelta(days=1)
+                    continue # Move to next day
+                else:
+                    if log_level != "none": print(f"WARNING: Cached resampled file {file_path_resampled} is invalid: {message}. Re-generating.")
+                    os.remove(file_path_resampled) # Remove invalid resampled file
+            except Exception as e:
+                if log_level != "none": print(f"ERROR: Could not read resampled file {file_path_resampled}: {e}. Re-generating.")
+                if os.path.exists(file_path_resampled): os.remove(file_path_resampled)
+
+        # 2. If resampled data not found/invalid, load/fetch raw data
+        if not os.path.exists(file_path_raw) or os.path.getsize(file_path_raw) == 0:
+            if log_level != "none": print(f"Missing or empty raw data for {symbol} on {date_str}. Attempting to fetch and cache.")
             try:
                 day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
                 day_end_dt_utc = datetime.combine(current_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) - timedelta(microseconds=1)
                 start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
                 end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-                df_fetched_daily = fetch_continuous_aggregate_trades(
+                df_daily = fetch_continuous_aggregate_trades(
                     symbol=symbol,
                     start_date_str=start_datetime_str_for_api,
                     end_date_str=end_datetime_str_for_api,
@@ -500,81 +526,93 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                     api_key=binance_settings.get("api_key"),
                     api_secret=binance_settings.get("api_secret"),
                     testnet=binance_settings.get("testnet", False),
-                    log_level=log_level, # MODIFIED: Pass log_level
+                    log_level=log_level,
                     api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2)
                 )
                 
-                if df_fetched_daily is None or df_fetched_daily.empty:
-                    if log_level != "none": print(f"No data was fetched for {symbol} on {date_str}. Skipping this day.") # MODIFIED: Conditional print
+                if df_daily is None or df_daily.empty:
+                    if log_level != "none": print(f"No raw data was fetched for {symbol} on {date_str}. Skipping this day.")
                     current_date += timedelta(days=1)
                     continue
+                else: # Validate newly fetched raw data
+                    from src.data.check_tick_cache import validate_daily_data # Import here
+                    is_valid, message = validate_daily_data(file_path_raw, log_level='none')
+                    if not is_valid:
+                        if log_level != "none": print(f"WARNING: Newly fetched raw file {file_path_raw} is invalid: {message}. Consider re-running downloader for this day.")
             except Exception as e:
-                if log_level != "none": print(f"Could not fetch missing data for {symbol} on {date_str}: {e}. Skipping this day.") # MODIFIED: Conditional print
+                if log_level != "none": print(f"Could not fetch missing raw data for {symbol} on {date_str}: {e}. Skipping this day.")
+                current_date += timedelta(days=1)
+                continue
+        else: # Raw file exists, try to load it
+            try:
+                df_daily = pd.read_parquet(file_path_raw)
+                if df_daily.empty:
+                    if log_level != "none": print(f"Raw file {file_path_raw} is empty after re-check. Skipping this day.")
+                    current_date += timedelta(days=1)
+                    continue
+                else: # Validate existing raw file
+                    from src.data.check_tick_cache import validate_daily_data # Import here
+                    is_valid, message = validate_daily_data(file_path_raw, log_level='none')
+                    if not is_valid:
+                        if log_level != "none": print(f"WARNING: Existing raw file {file_path_raw} is invalid: {message}. Consider re-running downloader for this day.")
+
+            except Exception as e:
+                if log_level != "none": print(f"Error loading raw data from {file_path_raw}: {e}. Skipping this day.")
                 current_date += timedelta(days=1)
                 continue
 
-        try:
-            df = pd.read_parquet(file_path)
-            if not df.empty:
-                all_data_frames.append(df)
-            else:
-                if log_level != "none": print(f"File {file_path} is empty after re-check. Skipping this day.") # MODIFIED: Conditional print
-        except Exception as e:
-            if log_level != "none": print(f"Error loading data from {file_path}: {e}. Skipping this day.") # MODIFIED: Conditional print
+        # 3. Process (resample if configured) and add to list
+        if tick_resample_interval_ms:
+            if not isinstance(df_daily.index, pd.DatetimeIndex) or df_daily.index.tz is None:
+                df_daily.index = pd.to_datetime(df_daily.index, utc=True)
 
+            if df_daily.empty:
+                if log_level != "none": print(f"Warning: Daily DataFrame is empty, cannot resample with interval '{tick_resample_interval_ms}'.")
+                current_date += timedelta(days=1)
+                continue
+
+            try:
+                freq_str = f"{tick_resample_interval_ms}ms"
+                agg_rules = {
+                    'Price': 'last',
+                    'Quantity': 'sum'
+                }
+                if 'IsBuyerMaker' in df_daily.columns:
+                    agg_rules['IsBuyerMaker'] = 'last'
+                valid_agg_rules = {col: rule for col, rule in agg_rules.items() if col in df_daily.columns}
+                
+                resampled_df_daily = df_daily.resample(freq_str).agg(valid_agg_rules)
+                resampled_df_daily.ffill(inplace=True)
+                resampled_df_daily.bfill(inplace=True)
+                resampled_df_daily.fillna(0, inplace=True)
+
+                if log_level != "none": print(f"Daily tick data resampled from {df_daily.shape} to {resampled_df_daily.shape} with interval {freq_str}. Saving to cache.")
+                # Save the resampled daily data
+                try:
+                    resampled_df_daily.to_parquet(file_path_resampled)
+                    if log_level != "none": print(f"Resampled tick data saved to cache: {file_path_resampled}")
+                except Exception as e:
+                    if log_level != "none": print(f"ERROR: Could not save resampled daily data to {file_path_resampled}: {e}")
+                    traceback.print_exc()
+
+                all_data_frames.append(resampled_df_daily)
+
+            except Exception as e:
+                if log_level != "none": print(f"Error resampling daily tick data with interval {tick_resample_interval_ms}ms: {e}. Skipping this day.")
+                traceback.print_exc()
+        else: # No resampling, just add raw data
+            all_data_frames.append(df_daily)
+            
         current_date += timedelta(days=1)
 
+
     if not all_data_frames:
-        if log_level != "none": print(f"No data found or loaded for {symbol} in the range {start_date_str} to {end_date_str}.") # MODIFIED: Conditional print
+        if log_level != "none": print(f"No data found or loaded for {symbol} in the range {start_date_str} to {end_date_str}.")
         return pd.DataFrame()
 
     combined_df = pd.concat(all_data_frames)
     combined_df = combined_df.sort_index()
     combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
-
-    # --- NEW: Time-based Resampling Logic ---
-    if tick_resample_interval_ms:
-        if not isinstance(combined_df.index, pd.DatetimeIndex) or combined_df.index.tz is None:
-            combined_df.index = pd.to_datetime(combined_df.index, utc=True)
-
-        if combined_df.empty:
-            if log_level != "none": print(f"Warning: DataFrame is empty, cannot resample with interval '{tick_resample_interval_ms}'.") # MODIFIED: Conditional print
-            return combined_df
-
-        try:
-            freq_str = f"{tick_resample_interval_ms}ms"
-            
-            # Define aggregation rules for different columns
-            agg_rules = {
-                'Price': 'last', # Last price in the interval
-                'Quantity': 'sum' # Sum of quantity in the interval
-            }
-            # Add other columns if they exist and define how to aggregate them
-            if 'IsBuyerMaker' in combined_df.columns:
-                # For boolean, taking the last, or mode, or a custom aggregation
-                # Here, we take the last to simplify
-                agg_rules['IsBuyerMaker'] = 'last' 
-
-            # Filter agg_rules to only include columns actually present in combined_df
-            valid_agg_rules = {col: rule for col, rule in agg_rules.items() if col in combined_df.columns}
-
-            resampled_df = combined_df.resample(freq_str).agg(valid_agg_rules)
-            
-            # Fill any NaNs that might result from resampling (intervals with no ticks)
-            # Use forward-fill then back-fill to handle gaps
-            resampled_df.ffill(inplace=True)
-            resampled_df.bfill(inplace=True)
-            resampled_df.fillna(0, inplace=True) # Final fill for any remaining NaNs (e.g., if df was entirely empty)
-
-
-            if log_level != "none": print(f"Tick data resampled from {combined_df.shape} to {resampled_df.shape} with interval {freq_str}.") # MODIFIED: Conditional print
-            return resampled_df
-
-        except Exception as e:
-            if log_level != "none": print(f"Error resampling tick data with interval {tick_resample_interval_ms}ms: {e}. Returning original data.") # MODIFIED: Conditional print
-            traceback.print_exc()
-            # Fallback to original combined_df if resampling fails
-            return combined_df
 
     return combined_df
 
