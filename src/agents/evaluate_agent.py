@@ -254,7 +254,7 @@ def main():
     except Exception as e:
         print(f"ERROR: K-line evaluation data not loaded. Details: {e}")
         traceback.print_exc()
-        exit(1) # This exit is what caused the FAILED test
+        raise # Changed from exit(1)
 
     print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
     eval_tick_df = pd.DataFrame() # Initialize
@@ -274,7 +274,7 @@ def main():
         print(f"ERROR: Tick evaluation data not loaded. Details: {e}")
         traceback_str = traceback.format_exc()
         print(traceback_str)
-        exit(1) # This exit is also what caused the FAILED test
+        raise # Changed from exit(1)
 
     # --- 4. Create Evaluation Environment and Load Model ---
     eval_env = None
@@ -313,7 +313,7 @@ def main():
         print(f"Error creating evaluation environment: {e}")
         traceback_str = traceback.format_exc()
         print(traceback_str)
-        exit(1)
+        raise # Changed from exit(1)
 
     try:
         # Dynamically load the correct model class

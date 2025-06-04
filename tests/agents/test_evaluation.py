@@ -45,7 +45,7 @@ evaluation_data:
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.0003\n") # Minimal PPO params for hashing
 
     # Create dummy main config.yaml in the root tmp_path
-    (tmp_path / "config.yaml").write_text("agent_type: 'PPO'\n") # Set agent_type
+    (tmp_path / "config.yaml").write_text("agent_type: 'PPO'\n")
     
     return str(tmp_path)
 
@@ -68,7 +68,7 @@ def mock_data_loader():
 
         mock_load_kline.return_value = mock_kline_df
         mock_load_tick.return_value = mock_tick_df
-        yield # Allows test to run, then unpatches
+        yield mock_load_kline, mock_load_tick # Yield the individual mock objects
 
 @pytest.fixture
 def mock_sb3_ppo_load():
@@ -127,12 +127,13 @@ def test_evaluate_agent_main_runs_successfully(
 ):
     """Test that the main evaluation function runs without critical errors."""
     try:
+        mock_kline_loader, mock_tick_loader = mock_data_loader # Unpack the tuple
         evaluate_agent_main()
         # If no unhandled exceptions, test passes.
         # Check that model.load was called and data loaders were called.
         mock_sb3_ppo_load.assert_called_once()
-        mock_data_loader.__enter__.return_value[0].assert_called() # kline loader
-        mock_data_loader.__enter__.return_value[1].assert_called() # tick loader
+        mock_kline_loader.assert_called() # kline loader
+        mock_tick_loader.assert_called() # tick loader
     except SystemExit as e:
         pytest.fail(f"evaluate_agent_main exited unexpectedly with code {e.code}")
     except Exception as e:
@@ -145,6 +146,7 @@ def test_evaluate_agent_main_produces_logs_and_charts(
     with patch('src.agents.evaluate_agent.plot_performance') as mock_plot_performance, \
          patch('json.dump') as mock_json_dump: # To check if history is saved
         
+        mock_kline_loader, mock_tick_loader = mock_data_loader # Unpack the tuple
         evaluate_agent_main()
         
         # Check for creation of eval log directory
