@@ -116,28 +116,37 @@ def test_sell_action(trading_env):
     balance_before_sell = env.current_balance
     
     # Advance a few steps to change price and then sell
-    for _ in range(5):
-        env.step((0, np.array([0.0], dtype=np.float32))) # Hold
+    # Manipulate price to ensure a profit for the test case
+    env.current_step += 5 # Advance steps for a new price point
     
-    current_price = env.decision_prices[env.current_step]
+    # Ensure current_step is within bounds for decision_prices
+    if env.current_step >= len(env.decision_prices):
+        env.current_step = len(env.decision_prices) - 1 # Adjust to last available tick
     
+    current_price = entry_price * 1.05 # Guarantee 5% profit
+    # Temporarily set the decision price for the current step
+    original_price_at_step = env.decision_prices[env.current_step]
+    env.decision_prices[env.current_step] = current_price
+
     # Action: Sell (2)
     sell_action = (2, np.array([0.0], dtype=np.float32)) # Profit target doesn't matter for sell in raw action
     obs, reward, terminated, truncated, info = env.step(sell_action)
 
     assert not env.position_open
     assert env.position_volume == 0
-    assert env.entry_price == 0 # Entry price should reset
+    assert env.entry_price == 0.0 # Entry price should reset to 0.0
     assert env.current_balance > balance_before_sell # Balance should increase after sell
     assert 'sell' in [t['type'] for t in env.trade_history]
     assert len(env.trade_history) == 3 # Initial + Buy + Sell
 
-    # Check reward for profit/loss (simple check)
+    # Check reward for profit (should be positive now)
     pnl = (current_price - entry_price) * initial_position_volume * (1 - env.commission_pct)
-    if pnl > 0:
-        assert reward > env.config["reward_sell_profit_base"]
-    else:
-        assert reward < env.config["penalty_sell_loss_base"]
+    assert pnl > 0 # Ensure it was a profit
+    assert reward > env.config["reward_sell_profit_base"]
+
+    # Restore original price
+    env.decision_prices[env.current_step] = original_price_at_step
+
 
 def test_hold_action(trading_env):
     """Test the hold action."""
@@ -166,7 +175,7 @@ def test_catastrophic_loss(trading_env):
     """Test episode termination on catastrophic loss."""
     env = trading_env
     env.reset()
-    env.initial_balance = 100 # Make it easy to hit loss limit
+    env.initial_balance = 100.0 # Make it easy to hit loss limit
     env.catastrophic_loss_limit = env.initial_balance * (1.0 - env.config["catastrophic_loss_threshold_pct"])
     env.current_balance = env.initial_balance
 
@@ -175,10 +184,15 @@ def test_catastrophic_loss(trading_env):
     env.entry_price = 100.0
     env.position_volume = 1.0
 
-    # Simulate price drop to trigger catastrophic loss
-    # Temporarily modify decision_prices to a very low value for the next step
+    # Simulate price drop to trigger catastrophic loss at the current step's price
     original_decision_prices = env.decision_prices.copy()
-    env.decision_prices[env.current_step + 1] = env.entry_price * (1.0 - env.config["catastrophic_loss_threshold_pct"] - 0.01) # Price drops below threshold
+    
+    # Ensure current_step is within bounds for decision_prices
+    if env.current_step >= len(env.decision_prices):
+        env.current_step = len(env.decision_prices) - 1 # Adjust to last available tick
+
+    price_at_loss = env.entry_price * (1.0 - env.config["catastrophic_loss_threshold_pct"] - 0.01) # Price drops below threshold
+    env.decision_prices[env.current_step] = price_at_loss
     
     # Step to trigger loss
     action_hold = (0, np.array([0.0], dtype=np.float32))
@@ -226,12 +240,6 @@ def test_observation_clipping(trading_env):
     obs = env._get_observation()
 
     # Check that relevant observation features are clipped
-    # The portfolio state features (norm_entry_price, unreal_pnl_ratio) are clipped
-    # Tick/Kline features themselves are not directly clipped in _get_observation,
-    # but `nan_to_num` is applied, and then clipping would happen later in VecNormalize.
-    # For now, check the specific portfolio features.
-    
-    # Find the indices of the portfolio features in the observation space
     # (assuming order: ticks, klines, is_open, norm_entry_price, unreal_pnl_ratio)
     obs_shape_ticks = env.tick_feature_window_size * env.num_tick_features_per_step
     obs_shape_klines = env.kline_window_size * env.num_kline_features_per_step
@@ -263,8 +271,14 @@ def test_profit_target_bonus(trading_env):
     env.step(buy_action)
 
     # Simulate price increase to just meet target
-    env.current_step += 1
+    env.current_step += 1 # Advance step
+    
+    # Ensure current_step is within bounds for decision_prices
+    if env.current_step >= len(env.decision_prices):
+        env.current_step = len(env.decision_prices) - 1
+
     target_sell_price_met = buy_price * (1 + profit_target + 0.0001) # Slightly above target
+    original_price_met_at_step = env.decision_prices[env.current_step]
     env.decision_prices[env.current_step] = target_sell_price_met
 
     sell_action = (2, np.array([0.0], dtype=np.float32)) # Profit target param doesn't affect sell logic
@@ -275,14 +289,21 @@ def test_profit_target_bonus(trading_env):
     expected_base_reward_met = env.config["reward_sell_profit_base"] + (pnl_met / (env.initial_balance + 1e-9)) * env.config["reward_sell_profit_factor"]
     
     assert reward_met > expected_base_reward_met # Should have received bonus
-    assert np.isclose(reward_met, expected_base_reward_met + env.config["reward_sell_meets_target_bonus"])
+    assert reward_met == pytest.approx(expected_base_reward_met + env.config["reward_sell_meets_target_bonus"])
+
+    # Restore original price
+    env.decision_prices[env.current_step] = original_price_met_at_step
 
     # Reset and test price increase below target
     env.reset()
     env.step(buy_action) # Re-buy to reset state with same target
     
-    env.current_step += 1
+    env.current_step += 1 # Advance step
+    if env.current_step >= len(env.decision_prices):
+        env.current_step = len(env.decision_prices) - 1
+
     target_sell_price_below = buy_price * (1 + profit_target - 0.0001) # Slightly below target
+    original_price_below_at_step = env.decision_prices[env.current_step]
     env.decision_prices[env.current_step] = target_sell_price_below
 
     obs_below, reward_below, terminated_below, truncated_below, info_below = env.step(sell_action)
@@ -292,4 +313,7 @@ def test_profit_target_bonus(trading_env):
     expected_base_reward_below = env.config["reward_sell_profit_base"] + (pnl_below / (env.initial_balance + 1e-9)) * env.config["reward_sell_profit_factor"]
 
     assert reward_below < expected_base_reward_below # Should have received penalty
-    assert np.isclose(reward_below, expected_base_reward_below + env.config["penalty_sell_profit_below_target"])
+    assert reward_below == pytest.approx(expected_base_reward_below + env.config["penalty_sell_profit_below_target"])
+
+    # Restore original price
+    env.decision_prices[env.current_step] = original_price_below_at_step

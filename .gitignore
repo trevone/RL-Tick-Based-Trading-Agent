@@ -6,3 +6,4 @@ __pycache__
 agg_trades.txt
 klines.txt
 train_output.txt
+pytest.txt

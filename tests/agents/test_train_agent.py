@@ -4,6 +4,8 @@ import os
 import shutil
 import json
 from unittest.mock import patch, MagicMock
+import pandas as pd # <-- ADDED THIS IMPORT
+import numpy as np # <-- ADDED THIS IMPORT, as numpy is also used
 
 # Import the train_agent function from the new path
 from src.agents.train_agent import train_agent, load_default_configs_for_training
@@ -137,8 +139,6 @@ def test_train_agent_sac_setup(mock_config_dir, mock_data_loader, mock_sb3_model
     # Manually ensure the default config loading paths are correct for the test fixture
     # This might require adjusting how load_default_configs_for_training finds its paths
     # or ensuring mock_config_dir includes SAC defaults too.
-    # For this test, we'll ensure sac_params.yaml is available in the defaults.
-    
     # Simpler: pass override directly for agent_type and params
     override_config = {
         "agent_type": "SAC",

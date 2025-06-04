@@ -72,16 +72,6 @@ def load_config(main_config_path: str = "config.yaml",
 
 
 def _calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: list) -> pd.DataFrame:
-    if not TALIB_AVAILABLE:
-        print("TA-Lib not available, skipping technical indicator calculation.")
-        # Ensure all requested features are present, even if as NaNs
-        for feature in price_features_to_add:
-            if feature not in df.columns and feature not in ['Open', 'High', 'Low', 'Close', 'Volume']:
-                df[feature] = np.nan
-        return df
-
-    if df.empty:
-        return df
     df_processed = df.copy()
 
     # Ensure required columns are present and numeric
@@ -89,7 +79,10 @@ def _calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: lis
     for col in required_cols_for_ta:
         if col not in df_processed.columns:
             print(f"ERROR: Missing required column '{col}' for TA calculation. Cannot calculate TAs.")
-            df_processed[col] = np.nan # Use NaN first to allow TA-Lib to handle it
+            # If critical column is missing, fill with NaN and return to prevent further errors
+            df_processed[col] = np.nan
+            df_processed.fillna(0, inplace=True) # Fill all to avoid further NaNs
+            return df_processed
         else:
             df_processed[col] = pd.to_numeric(df_processed[col], errors='coerce') # Ensure numeric
 
@@ -98,6 +91,13 @@ def _calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: lis
     if df_processed.empty:
         print("WARNING: DataFrame became empty after dropping NaNs for TA calculation.")
         return df_processed
+
+    if not TALIB_AVAILABLE:
+        print("TA-Lib not available, skipping technical indicator calculation.")
+        # Only return the base OHLCV features if TA-Lib is not available
+        final_df = df_processed[required_cols_for_ta].copy()
+        return final_df.bfill().ffill().fillna(0) # Fill NaNs for base features
+
 
     # Prepare numpy arrays from pandas Series for TA-Lib
     high_np = df_processed['High'].values
@@ -166,11 +166,10 @@ def _calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: lis
                         df_processed[feature_name] = pattern_func(open_np, high_np, low_np, close_np)
                 else:
                     print(f"Warning: TA-Lib function '{feature_name}' not found for candlestick pattern.")
-                    df_processed[feature_name] = np.nan
-
+                    df_processed[feature_name] = np.nan # Still add with NaN if func not found
             else:
                 print(f"Warning: Technical indicator or pattern '{feature_name}' requested but no specific calculation logic defined. Assigning NaN.")
-                df_processed[feature_name] = np.nan
+                df_processed[feature_name] = np.nan # Still add with NaN if logic not found
 
         except Exception as e:
             print(f"Error calculating TA '{feature_name}': {e}. Assigning NaN.")
@@ -181,6 +180,9 @@ def _calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: lis
     df_processed.ffill(inplace=True)
     df_processed.fillna(0, inplace=True)
     
+    # Final check for requested features, especially for cases where TA-Lib func not found.
+    # This loop is redundant with the TALIB_AVAILABLE=False block above if features are only TAs
+    # For safety, keep to ensure ALL requested features are in final output.
     for feature in price_features_to_add:
         if feature not in df_processed.columns and feature not in required_cols_for_ta:
             print(f"Warning: Requested feature '{feature}' is still missing after all calculations and fills. Setting to 0.0.")
@@ -222,10 +224,14 @@ def fetch_and_cache_kline_data(
             df = pd.read_parquet(cache_file) if cache_file_type == "parquet" else pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if df.index.tz is None and not df.empty: df.index = df.index.tz_localize('UTC')
             
-            expected_output_columns = set(['Open', 'High', 'Low', 'Close', 'Volume'] + price_features_to_add)
-            
-            if not all(col in df.columns for col in expected_output_columns):
-                print(f"Warning: Cached K-line data missing some requested TA features or base columns. Refetching: {cache_file}")
+            # Re-process if TA-Lib is now available and features missing, or if column count is off
+            # This check is better for ensuring consistency: if a required TA feature is missing, refetch.
+            # Base OHLCV features are always expected from API, TAs might be added.
+            expected_output_columns = set([col for col in price_features_to_add if col in ['Open', 'High', 'Low', 'Close', 'Volume']] + 
+                                          [col for col in price_features_to_add if col not in ['Open', 'High', 'Low', 'Close', 'Volume'] and TALIB_AVAILABLE])
+
+            if not expected_output_columns.issubset(df.columns):
+                print(f"Warning: Cached K-line data missing some requested features (e.g., TAs) or columns mismatch. Refetching: {cache_file}")
                 os.remove(cache_file)
                 return pd.DataFrame()
             return df
@@ -466,8 +472,10 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     if binance_settings is None:
         binance_settings = {} # Use an empty dict if not provided
 
-    start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-    end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    # The format string for strptime needs to match the input string exactly.
+    # The start_date_str and end_date_str from binance_settings are 'YYYY-MM-DD HH:MM:SS'.
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S').date()
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S').date() # Corrected format for end_date_str
 
     all_data_frames = []
     current_date = start_date
@@ -536,8 +544,10 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
     if binance_settings is None:
         binance_settings = {} # Use an empty dict if not provided
 
-    start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-    end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    # The format string for strptime needs to match the input string exactly.
+    # The start_date_str and end_date_str from binance_settings are 'YYYY-MM-DD HH:MM:SS'.
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S').date()
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S').date() # Corrected format for end_date_str
 
     all_data_frames = []
     current_date = start_date

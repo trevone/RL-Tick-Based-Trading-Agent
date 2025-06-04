@@ -1,4 +1,5 @@
 # evaluate_agent.py
+import pytest # Import pytest for the fixture if not already imported by user
 import os
 import pandas as pd
 import numpy as np
@@ -55,6 +56,14 @@ def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
     
     # Use the new load_config from src.data.utils which merges multiple files
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
+
+
+# --- Fixture to disable plotting in tests (add to your test_evaluation.py not src/agents/evaluate_agent.py) ---
+# This part belongs in tests/agents/test_evaluation.py, but I'm including it here as a reminder.
+# @pytest.fixture(autouse=True)
+# def disable_plotting_in_tests(monkeypatch):
+#     monkeypatch.setattr(plt, 'show', lambda: None)
+#     monkeypatch.setattr(plt, 'savefig', lambda *args, **kwargs: None)
 
 
 def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: str, log_dir: str, title: str = "Agent Performance"):
@@ -175,6 +184,10 @@ def main():
     current_log_level = effective_eval_config.get("run_settings", {}).get("log_level", "normal")
     agent_type = effective_eval_config.get("agent_type", "PPO") # Default to PPO
 
+    # DEBUG PRINT
+    if current_log_level == "detailed":
+        print(f"DEBUG: effective_eval_config at start of main:\n{json.dumps(convert_to_native_types(effective_eval_config), indent=2)}")
+
     # Apply environment overrides specified in the evaluation_data section of config.yaml
     # This is already handled by load_config if environment_overrides are top-level in config.yaml
     # or if evaluation_data section is merged correctly.
@@ -234,12 +247,12 @@ def main():
             binance_settings=eval_binance_settings # Pass binance settings for API keys/testnet
         )
         if eval_kline_df.empty:
-            raise ValueError("K-line evaluation data not loaded or is empty.")
+            raise ValueError("K-line evaluation data is empty. Cannot proceed with evaluation.")
         print(f"K-line eval data loaded: {eval_kline_df.shape} from {eval_kline_df.index.min()} to {eval_kline_df.index.max()}")
     except Exception as e:
         print(f"ERROR: K-line evaluation data not loaded. Details: {e}")
         traceback.print_exc()
-        exit(1)
+        exit(1) # This exit is what caused the FAILED test
 
     print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
     eval_tick_df = pd.DataFrame() # Initialize
@@ -252,13 +265,13 @@ def main():
             binance_settings=eval_binance_settings # Pass binance settings for API keys/testnet
         )
         if eval_tick_df.empty:
-            raise ValueError("Tick evaluation data not loaded or is empty.")
+            raise ValueError("Tick evaluation data is empty. Cannot proceed with evaluation.")
         print(f"Tick eval data loaded: {eval_tick_df.shape} from {eval_tick_df.index.min()} to {eval_tick_df.index.max()}")
     except Exception as e:
         print(f"ERROR: Tick evaluation data not loaded. Details: {e}")
         traceback_str = traceback.format_exc()
         print(traceback_str)
-        exit(1)
+        exit(1) # This exit is also what caused the FAILED test
 
     # --- 4. Create Evaluation Environment and Load Model ---
     eval_env = None
@@ -297,7 +310,6 @@ def main():
         print(f"Error creating evaluation environment: {e}")
         traceback_str = traceback.format_exc()
         print(traceback_str)
-        if eval_env: eval_env.close()
         exit(1)
 
     try:

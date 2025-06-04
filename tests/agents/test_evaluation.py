@@ -5,10 +5,16 @@ import shutil
 import pandas as pd
 import numpy as np
 from unittest.mock import patch, MagicMock
+from datetime import datetime, timezone # Import datetime and timezone for timestamps
 
 # Import the main function from the new path
 from src.agents.evaluate_agent import main as evaluate_agent_main
 from src.agents.evaluate_agent import plot_performance # Also test plot_performance directly
+
+# Import necessary SB3 components for mocking
+from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3 import PPO, SAC, DDPG, A2C # For type hinting or specific mocking
 
 # --- Fixtures ---
 @pytest.fixture
@@ -23,7 +29,18 @@ def mock_config_dir(tmp_path):
     (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_dir_base: 'logs/'\n  model_name: 'test_agent'\n  log_level: 'none'\n  eval_log_dir: 'logs/evaluation/'\n  model_path: 'logs/training/mock_hash_test_agent/best_model/best_model.zip'\n")
     (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n  initial_balance: 10000.0\n")
     (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  default_symbol: 'BTCUSDT'\n  historical_interval: '1h'\n  historical_cache_dir: 'data_cache/'\n")
-    (defaults_dir / "evaluation_data.yaml").write_text("evaluation_data:\n  start_date_eval: '2024-01-01'\n  end_date_eval: '2024-01-01'\n  n_evaluation_episodes: 1\n")
+    
+    # Corrected evaluation_data.yaml content for the mock
+    (defaults_dir / "evaluation_data.yaml").write_text("""
+evaluation_data:
+  start_date_eval: '2024-01-01 00:00:00'
+  end_date_eval: '2024-01-01 23:59:59'
+  start_date_kline_eval: '2024-01-01 00:00:00'
+  end_date_kline_eval: '2024-01-01 23:59:59'
+  start_date_tick_eval: '2024-01-01 00:00:00'
+  end_date_tick_eval: '2024-01-01 23:59:59' # Use end of day for tick data
+  n_evaluation_episodes: 1
+""")
     (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size']\n  agent_params:\n    PPO: ['learning_rate']\n  binance_settings: ['default_symbol']\n")
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.0003\n") # Minimal PPO params for hashing
 
@@ -43,6 +60,7 @@ def mock_data_loader():
             {'Open': [100.0], 'High': [101.0], 'Low': [99.0], 'Close': [100.5], 'Volume': [10.0]},
             index=pd.to_datetime(['2024-01-01 00:00:00'], utc=True)
         )
+        # Ensure enough ticks for the env's tick_feature_window_size (min 1)
         mock_tick_df = pd.DataFrame(
             {'Price': [100.0, 100.1, 100.2, 100.3, 100.4], 'Quantity': [1.0, 1.1, 1.2, 1.3, 1.4]},
             index=pd.to_datetime(['2024-01-01 00:00:00.000', '2024-01-01 00:00:00.001', '2024-01-01 00:00:00.002', '2024-01-01 00:00:00.003', '2024-01-01 00:00:00.004'], utc=True)
@@ -57,7 +75,8 @@ def mock_sb3_ppo_load():
     """Mocks PPO.load to prevent actual model loading."""
     with patch('stable_baselines3.PPO.load') as mock_ppo_load:
         mock_model_instance = MagicMock()
-        mock_model_instance.predict.return_value = (np.array([0, 0.01]), None) # Mock predict to return (Hold, target)
+        # Mock predict to return (Hold, target) - needs to be array of floats
+        mock_model_instance.predict.return_value = (np.array([0.0, 0.01], dtype=np.float32), None)
         mock_ppo_load.return_value = mock_model_instance
         yield mock_ppo_load
 
@@ -65,10 +84,12 @@ def mock_sb3_ppo_load():
 def mock_sb3_vecnormalize_load():
     """Mocks VecNormalize.load to prevent actual loading of stats."""
     with patch('stable_baselines3.common.vec_env.VecNormalize.load') as mock_vecnormalize_load:
-        mock_vecnormalize_instance = MagicMock()
+        # Mock the VecNormalize instance itself, ensure it has a training=False attribute
+        mock_vecnormalize_instance = MagicMock(spec=VecNormalize)
+        mock_vecnormalize_instance.training = False # Essential for eval mode
+        mock_vecnormalize_instance.norm_reward = False # Essential for eval mode
         mock_vecnormalize_load.return_value = mock_vecnormalize_instance
         yield mock_vecnormalize_load
-
 
 @pytest.fixture(autouse=True)
 def setup_teardown_dirs(tmp_path, monkeypatch):

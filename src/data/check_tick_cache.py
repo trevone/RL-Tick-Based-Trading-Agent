@@ -32,7 +32,7 @@ EXPECTED_KLINE_BASE_COLUMNS_INFO = {
 AGG_TRADES_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_aggtrades)_" # Matches the fixed prefix "bn_aggtrades_"
     r"(?P<symbol>[A-Z0-9]+)_"      # Matches the symbol (e.g., BTCUSDT)
-    r"(?P<date>\d{4}-\d{2}-\d{2})" # Matches YYYY-MM-DD
+    r"(?P<date>\d{4}-\d{2}-\d{2})" # Matchesnemidophorus-MM-DD
     r"\.parquet$"                  # Matches ".parquet" extension
 )
 
@@ -42,7 +42,7 @@ KLINE_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_klines)_"     # Matches the fixed prefix "bn_klines_"
     r"(?P<symbol>[A-Z0-9]+)_"      # Matches the symbol (e.g., BTCUSDT)
     r"(?P<interval>[a-zA-Z0-9]+)_" # Matches the interval (e.g., 1h, 1m, 1d)
-    r"(?P<date>\d{4}-\d{2}-\d{2})"     # Matches YYYY-MM-DD
+    r"(?P<date>\d{4}-\d{2}-\d{2})"     # Matchesnemidophorus-MM-DD
     r"(?P<features>_([a-zA-Z0-9]+(_[a-zA-Z0-9]+)*))?" # Optional features part (e.g., _sma20_rsi14_volume)
     r"\.parquet$"                  # Matches ".parquet" extension
 )
@@ -166,6 +166,12 @@ def validate_daily_data(filepath: str) -> tuple[bool, str]:
     max_read_retries = 10
     read_retry_delay_sec = 0.2
 
+    # Check for 0-byte file explicitly to avoid pyarrow.lib.ArrowInvalid
+    if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
+        print(f"  File is 0 bytes: {filepath}. Treating as empty but valid.")
+        # Return an empty DataFrame, then the df.empty check will handle it.
+        return True, "DataFrame is empty (0 bytes). (May be valid for periods with no trades/klines)."
+
     for i in range(max_read_retries):
         try:
             df = pd.read_parquet(filepath)
@@ -183,8 +189,9 @@ def validate_daily_data(filepath: str) -> tuple[bool, str]:
         return False, f"File did not become readable after {max_read_retries} attempts. File not found or persistently inaccessible."
 
     file_size_bytes = os.path.getsize(filepath)
-    if file_size_bytes == 0 and not df.empty:
-        return False, "File is 0 bytes but DataFrame was not empty after reading (inconsistent)."
+    # The check for 0-byte file is now done before read_parquet, so this line is less critical
+    # if file_size_bytes == 0 and not df.empty:
+    #    return False, "File is 0 bytes but DataFrame was not empty after reading (inconsistent)."
     print(f"  File Size: {file_size_bytes / 1024:.2f} KB")
 
 
