@@ -442,7 +442,7 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
 
 
 # --- NEW: Function to fetch and cache data for a single day (used by data_downloader_manager.py) ---
-def fetch_and_cache_tick_data(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR) -> Union[pd.DataFrame, None]:
+def fetch_and_cache_tick_data(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR, log_level: str = "normal") -> Union[pd.DataFrame, None]: # MODIFIED: Added log_level
     """
     Wrapper to fetch and cache aggregate trade data for a specific date range (typically a single day).
     This function is intended to be called by the new data_downloader_manager.py for daily fetching.
@@ -457,14 +457,14 @@ def fetch_and_cache_tick_data(symbol: str, start_date_str: str, end_date_str: st
         api_key=None, # These should be set via env vars or client init outside this func
         api_secret=None, # These should be set via env vars or client init outside this func
         testnet=False, # This should be set via config
-        log_level="normal", # This should be set via config
+        log_level=log_level, # MODIFIED: Pass log_level
         api_request_delay_seconds=0.2 # This should be set via config
     )
     return df if not df.empty else None
 
 # --- NEW: Function to load data for training, checking for missing days ---
 def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR,
-                             binance_settings: Dict = None, tick_resample_interval_ms: int = None) -> pd.DataFrame: # Added tick_resample_interval_ms
+                             binance_settings: Dict = None, tick_resample_interval_ms: int = None, log_level: str = "normal") -> pd.DataFrame: # MODIFIED: Added log_level
     """
     Loads tick data (aggregate trades) for a given symbol and date range.
     Checks for and fetches any missing days within the range for training purposes.
@@ -485,7 +485,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         file_path = get_data_path_for_day(date_str, symbol, data_type="agg_trades", cache_dir=cache_dir)
 
         if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-            print(f"Missing or empty data for {symbol} on {date_str}. Attempting to fetch and cache.")
+            if log_level != "none": print(f"Missing or empty data for {symbol} on {date_str}. Attempting to fetch and cache.") # MODIFIED: Conditional print
             try:
                 day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
                 day_end_dt_utc = datetime.combine(current_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) - timedelta(microseconds=1)
@@ -500,16 +500,16 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                     api_key=binance_settings.get("api_key"),
                     api_secret=binance_settings.get("api_secret"),
                     testnet=binance_settings.get("testnet", False),
-                    log_level=binance_settings.get("log_level", "normal"),
+                    log_level=log_level, # MODIFIED: Pass log_level
                     api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2)
                 )
                 
                 if df_fetched_daily is None or df_fetched_daily.empty:
-                    print(f"No data was fetched for {symbol} on {date_str}. Skipping this day.")
+                    if log_level != "none": print(f"No data was fetched for {symbol} on {date_str}. Skipping this day.") # MODIFIED: Conditional print
                     current_date += timedelta(days=1)
                     continue
             except Exception as e:
-                print(f"Could not fetch missing data for {symbol} on {date_str}: {e}. Skipping this day.")
+                if log_level != "none": print(f"Could not fetch missing data for {symbol} on {date_str}: {e}. Skipping this day.") # MODIFIED: Conditional print
                 current_date += timedelta(days=1)
                 continue
 
@@ -518,14 +518,14 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
             if not df.empty:
                 all_data_frames.append(df)
             else:
-                print(f"File {file_path} is empty after re-check. Skipping this day.")
+                if log_level != "none": print(f"File {file_path} is empty after re-check. Skipping this day.") # MODIFIED: Conditional print
         except Exception as e:
-            print(f"Error loading data from {file_path}: {e}. Skipping this day.")
+            if log_level != "none": print(f"Error loading data from {file_path}: {e}. Skipping this day.") # MODIFIED: Conditional print
 
         current_date += timedelta(days=1)
 
     if not all_data_frames:
-        print(f"No data found or loaded for {symbol} in the range {start_date_str} to {end_date_str}.")
+        if log_level != "none": print(f"No data found or loaded for {symbol} in the range {start_date_str} to {end_date_str}.") # MODIFIED: Conditional print
         return pd.DataFrame()
 
     combined_df = pd.concat(all_data_frames)
@@ -538,7 +538,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
             combined_df.index = pd.to_datetime(combined_df.index, utc=True)
 
         if combined_df.empty:
-            print(f"Warning: DataFrame is empty, cannot resample with interval '{tick_resample_interval_ms}'.")
+            if log_level != "none": print(f"Warning: DataFrame is empty, cannot resample with interval '{tick_resample_interval_ms}'.") # MODIFIED: Conditional print
             return combined_df
 
         try:
@@ -567,11 +567,11 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
             resampled_df.fillna(0, inplace=True) # Final fill for any remaining NaNs (e.g., if df was entirely empty)
 
 
-            print(f"Tick data resampled from {combined_df.shape} to {resampled_df.shape} with interval {freq_str}.")
+            if log_level != "none": print(f"Tick data resampled from {combined_df.shape} to {resampled_df.shape} with interval {freq_str}.") # MODIFIED: Conditional print
             return resampled_df
 
         except Exception as e:
-            print(f"Error resampling tick data with interval {tick_resample_interval_ms}ms: {e}. Returning original data.")
+            if log_level != "none": print(f"Error resampling tick data with interval {tick_resample_interval_ms}ms: {e}. Returning original data.") # MODIFIED: Conditional print
             traceback.print_exc()
             # Fallback to original combined_df if resampling fails
             return combined_df
