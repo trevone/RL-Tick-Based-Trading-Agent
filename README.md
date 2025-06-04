@@ -103,8 +103,8 @@ This project implements a Reinforcement Learning (RL) agent for algorithmic trad
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository_url>
-    cd <repository_name>
+    git clone git@github.com:trevone/RL-Tick-Based-Trading-Agent.git
+    cd RL-Tick-Based-Trading-Agent.git
     ```
 2.  **Create a Conda environment (recommended):**
     ```bash
