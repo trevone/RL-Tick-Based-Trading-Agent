@@ -33,7 +33,7 @@ if __name__ == "__main__":
     # Use the exact file name printed in your previous successful run.
     kline_filepath = "./binance_data_cache/bn_klines_BTCUSDT_1h_2025-05-01_to_2025-05-01_close_high_low_open_rsi14_sma20_volume.parquet"
     
-    print_kline_samples(kline_filepath, num_samples=5)
+    print_kline_samples(kline_filepath, num_samples=500)
 
     # You can also try another day's file if you downloaded multiple
     # kline_filepath_2 = "./binance_data_cache/bn_klines_BTCUSDT_1h_2025-05-02_to_2025-05-02_close_high_low_open_rsi14_sma20_volume.parquet"

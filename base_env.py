@@ -255,7 +255,25 @@ class SimpleTradingEnv(gym.Env):
             kline_features_stacked, 
             additional_features
         ])
-        return np.nan_to_num(observation, nan=0.0, posinf=self.obs_clip_high, neginf=self.obs_clip_low).astype(np.float32)
+        
+        # Apply nan_to_num and clipping
+        final_observation = np.nan_to_num(observation, nan=0.0, posinf=self.obs_clip_high, neginf=self.obs_clip_low).astype(np.float32)
+
+        # Add these lines to print or log observation details
+        if self.log_level == "detailed":
+            # Set print options to display full arrays
+            np.set_printoptions(threshold=np.inf, linewidth=np.inf)
+            print(f"\n--- Observation at Tick {safe_current_step} ---")
+            print(f"  Observation shape: {final_observation.shape}")
+            print(f"  Tick Features:\n{tick_features_stacked}") # Print whole array
+            print(f"  K-line Features:\n{kline_features_stacked}") # Print whole array
+            print(f"  Additional State Features: {additional_features}") # Already small, print as is
+            print(f"  Min/Max Observation values: {np.min(final_observation):.4f} / {np.max(final_observation):.4f}")
+            print("---------------------------------------")
+            # Reset print options to default to avoid affecting other prints
+            np.set_printoptions(threshold=1000, linewidth=75) # Default values, adjust if needed
+
+        return final_observation
 
     def _get_info(self) -> dict:
         safe_step = min(self.current_step, self.end_step)

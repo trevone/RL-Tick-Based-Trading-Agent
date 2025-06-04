@@ -3,3 +3,6 @@ config.yaml
 logs/
 binance_data_cache/
 __pycache__
+agg_trades.txt
+klines.txt
+train_output.txt

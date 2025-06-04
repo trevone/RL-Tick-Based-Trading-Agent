@@ -31,9 +31,9 @@ if __name__ == "__main__":
     # Define the path to one of your cached aggregate trade files.
     # Adjust this path if your file name or symbol/date differs.
     # Use the exact file name printed in your previous successful run.
-    agg_trades_filepath = "./binance_data_cache/bn_aggtrades_BTCUSDT_2025-05-01_to_2025-05-01.parquet"
+    agg_trades_filepath = "./binance_data_cache/bn_aggtrades_BTCUSDT_2025-05-01.parquet"
     
-    print_agg_trades_samples(agg_trades_filepath, num_samples=5)
+    print_agg_trades_samples(agg_trades_filepath, num_samples=500)
 
     # You can also try another day's file if you downloaded multiple
     # agg_trades_filepath_2 = "./binance_data_cache/bn_aggtrades_BTCUSDT_2025-05-02_to_2025-05-02.parquet"
