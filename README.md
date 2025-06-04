@@ -15,10 +15,11 @@ This project implements a Reinforcement Learning (RL) agent for algorithmic trad
 4.  [Configuration](#configuration)
 5.  [Usage](#usage)
       * [1. Data Acquisition and Caching](#1-data-acquisition-and-caching)
-      * [2. Agent Training](#2-agent-training)
-      * [3. Hyperparameter Optimization](#3-hyperparameter-optimization)
-      * [4. Model Evaluation](#4-model-evaluation)
-      * [5. Live Trading (Testnet/Mainnet)](#5-live-trading-testnetmainnet)
+      * [2. Data Verification](#2-data-verification)
+      * [3. Agent Training](#3-agent-training)
+      * [4. Hyperparameter Optimization](#4-hyperparameter-optimization)
+      * [5. Model Evaluation](#5-model-evaluation)
+      * [6. Live Trading (Testnet/Mainnet)](#6-live-trading-testnetmainnet)
 6.  [Troubleshooting](#troubleshooting)
 7.  [Contributing](#contributing)
 8.  [License](#license)
@@ -113,7 +114,7 @@ This project implements a Reinforcement Learning (RL) agent for algorithmic trad
     ```
 3.  **Install core dependencies:**
     ```bash
-    pip install pandas numpy gymnasium stable-baselines3[extra] python-binance PyYAML matplotlib optuna sb3-contrib
+    pip install pandas numpy gymnasium stable-baselines3[extra] python-binance PyYAML matplotlib optuna sb3-contrib tqdm
     # For plotting optimization results (optional)
     pip install plotly
     ```
@@ -198,6 +199,7 @@ The project uses a layered configuration system:
     environment:
       initial_balance: 5000.0
       kline_window_size: 30
+      tick_resample_interval_ms: 500 # Resample tick data to 500ms resolution
 
     ppo_params: # Only applies if agent_type is PPO
       total_timesteps: 5000000
@@ -208,17 +210,100 @@ The project uses a layered configuration system:
 
 ### 1\. Data Acquisition and Caching
 
-The `src/agents/train_agent.py` script (and others like `evaluate_agent.py`) will automatically fetch and cache historical K-line and tick data based on the dates specified in `configs/defaults/binance_settings.yaml` (or overridden in `config.yaml`).
+The project uses a local data cache to speed up repeated runs and reduce API calls. The `data_downloader_manager.py` script automates this process.
 
-  * **Initial Run**: The first time data for a new period or with new features is required, it will be downloaded. This can take significant time for granular tick data.
-  * **Subsequent Runs**: Data is loaded directly from the `data_cache/` directory, making subsequent runs much faster.
-  * You can also explicitly run `src/data/data_downloader_manager.py` to pre-download data:
+**Important:** Always run this script from the **root directory of your project** (e.g., `RL-Tick-Based-Trading-Agent`). Use the `-m` flag to ensure Python correctly resolves internal package imports.
+
+**Command Structure:**
+
+```bash
+python -m src.data.data_downloader_manager --start_date <YYYY-MM-DD> --end_date <YYYY-MM-DD> --symbol <SYMBOL> --data_type <agg_trades|kline> [optional_kline_args]
+```
+
+**Arguments:**
+
+* `--start_date`: The start date for data download (e.g., `2024-01-01`).
+* `--end_date`: The end date for data download (e.g., `2024-01-07`).
+* `--symbol`: The trading pair symbol (e.g., `BTCUSDT`).
+* `--data_type`: Type of data to download.
+    * `agg_trades`: For high-frequency aggregate trade (tick) data.
+    * `kline`: For candlestick (OHLCV) data, optionally with technical indicators.
+* `--interval`: (Required if `--data_type` is `kline`). The K-line interval (e.g., `1m`, `1h`, `1d`).
+* `--kline_features`: (Optional, for `kline` data\_type). A space-separated list of features to include (e.g., `Open High Close Volume SMA_10 RSI_7`). These features will be calculated and saved with the K-line data.
+
+**New Features in Download Manager:**
+
+* **Progress Bar**: A `tqdm` progress bar now displays the daily download status (e.g., `Downloading BTCUSDT agg_trades: 14%|██████████████████ | 1/7 [00:00<00:00, 9.04day/s]`), making it easier to track long-running data acquisition tasks.
+* **Cleaner Output**: Detailed internal logging from data fetching and validation utilities is suppressed, providing a neater and more focused output in the console. Messages related to file existence, download status, and validation success/failure will be shown concisely.
+
+**Examples:**
+
+1.  **Download Aggregate Trade Data for a week:**
     ```bash
-    python src/data/data_downloader_manager.py --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type kline --interval 1h --kline_features Open High Low Close Volume SMA_10 RSI_7
-    python src/data/data_downloader_manager.py --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type agg_trades
+    python -m src.data.data_downloader_manager --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type agg_trades
+    ```
+    *(You will see a progress bar indicating progress by day.)*
+
+2.  **Download 1-hour K-line Data with specific technical indicators:**
+    ```bash
+    python -m src.data.data_downloader_manager --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type kline --interval 1h --kline_features Open High Low Close Volume SMA_10 RSI_7 MACD
     ```
 
-### 2\. Agent Training
+Data will be saved to the `data_cache/` directory in Parquet format. The manager will check existing files and only download missing or invalid data.
+
+### 2\. Data Verification
+
+After downloading, it's crucial to verify the integrity and structure of your cached data.
+
+### Using `scripts/read_cache_sample.py`
+
+This script allows you to quickly inspect a sample of your cached data for a specific day.
+
+**Important:** Run this script from the **root directory of your project**.
+
+**Command Structure:**
+
+```bash
+python -m scripts.read_cache_sample --symbol <SYMBOL> --date <YYYY-MM-DD> --data_type <agg_trades|kline> [optional_kline_args]
+```
+
+**Arguments:**
+
+* `--symbol`: The trading pair symbol (e.g., `BTCUSDT`).
+* `--date`: The specific date of the data to inspect (e.g., `2024-01-01`).
+* `--data_type`: The type of data (`agg_trades` or `kline`).
+* `--interval`: (Required if `--data_type` is `kline`). The K-line interval (e.g., `1h`).
+* `--features`: (Optional, for `kline` data\_type). **Crucially, these must match the features used when you downloaded the K-line data** so the script can locate the correct file.
+
+**Examples:**
+
+1.  **Inspect Aggregate Trade Data for a day:**
+    ```bash
+    python -m scripts.read_cache_sample --symbol BTCUSDT --date 2024-01-01 --data_type agg_trades
+    ```
+
+2.  **Inspect K-line Data with specific features for a day:**
+    ```bash
+    python -m scripts.read_cache_sample --symbol BTCUSDT --date 2024-01-01 --data_type kline --interval 1h --features Open High Low Close Volume SMA_10 RSI_7 MACD
+    ```
+
+The script will print the head and tail of the DataFrame, its shape, time range, and columns, helping you confirm your data is as expected.
+
+### Data Integrity Checks (`src/data/check_tick_cache.py`)
+
+The `validate_daily_data` function, which is called internally by the download manager, performs comprehensive checks on each cached file (monotonic index, column types, missing values, timestamp ranges). You can also run `check_tick_cache.py` directly for detailed validation:
+
+```bash
+python -m src.data.check_tick_cache --filepath data_cache/bn_aggtrades_BTCUSDT_2024-01-01.parquet --log_level detailed
+```
+You can also use `--log_level normal` or `--log_level none` to control verbosity.
+
+### Tick Data Resampling for Training
+
+A new configuration option allows you to control the resolution of tick data used by the environment:
+* `environment.tick_resample_interval_ms`: Located in `configs/defaults/environment.yaml`. Set this to an integer (e.g., `100` for 100ms, `1000` for 1-second resolution) to resample tick data. Set to `null` to use original tick resolution. This helps "thin out" data for faster training while maintaining chronological order.
+
+### 3\. Agent Training
 
 To train your RL agent:
 
@@ -226,14 +311,15 @@ To train your RL agent:
       * Set `agent_type` to your desired algorithm (e.g., `PPO`, `SAC`).
       * Adjust any parameters in `environment`, `run_settings`, or the algorithm-specific sections (e.g., `ppo_params`) as desired.
       * Set historical data ranges in `configs/defaults/binance_settings.yaml` or override them in `config.yaml`.
+      * Consider setting `environment.tick_resample_interval_ms` to a value that provides a suitable data resolution for your training goals.
 2.  **Run the training script**:
     ```bash
-    python src/agents/train_agent.py
+    python -m src.agents.train_agent
     ```
       * Training logs, TensorBoard files, and the trained model (`trained_model_final.zip` and `best_model/best_model.zip`) will be saved in a unique subdirectory under `logs/training/` named after the configuration hash and model name.
       * You can monitor training progress using TensorBoard: `tensorboard --logdir logs/tensorboard_logs/`
 
-### 3\. Hyperparameter Optimization
+### 4\. Hyperparameter Optimization
 
 To find optimal hyperparameters using Optuna:
 
@@ -242,13 +328,13 @@ To find optimal hyperparameters using Optuna:
       * Define the `HYPERPARAMETER_SEARCH_SPACE` with ranges for the the parameters you want to optimize. Ensure these parameters are also listed in `configs/defaults/hash_keys.yaml` under the appropriate `agent_params` section for consistent hashing.
 2.  **Run the optimization script**:
     ```bash
-    python src/agents/hyperparameter_optimization.py
+    python -m src.agents.hyperparameter_optimization
     ```
       * Optuna will run multiple training trials, saving progress to `optuna_studies/optuna_study.db`.
       * Upon completion, it will print the best found hyperparameters and their corresponding metric value. It will also save these to `optuna_studies/best_hyperparameters.json`.
       * If `plotly` is installed, it can show interactive plots of the optimization history.
 
-### 4\. Model Evaluation
+### 5\. Model Evaluation
 
 To evaluate a trained model on unseen data:
 
@@ -258,12 +344,12 @@ To evaluate a trained model on unseen data:
       * Adjust `n_evaluation_episodes` in `configs/defaults/run_settings.yaml` (or override in `config.yaml`) as needed.
 2.  **Run the evaluation script**:
     ```bash
-    python src/agents/evaluate_agent.py
+    python -m src.agents.evaluate_agent
     ```
       * The script will fetch evaluation data, load the specified model, run evaluation episodes, and print a summary of performance metrics (total reward, final equity, profit/loss percentage).
       * It will generate and save a performance chart (`<eval_run_id>_performance_chart.png`) and trade history (`<eval_run_id>_trade_history.json`) in `logs/evaluation/`.
 
-### 5\. Live Trading (Testnet/Mainnet)
+### 6\. Live Trading (Testnet/Mainnet)
 
 The `src/agents/live_trader.py` script allows real-time market data consumption and agent-driven trade execution.
 
@@ -276,23 +362,22 @@ The `src/agents/live_trader.py` script allows real-time market data consumption 
 2.  **Enable Actual Trading (Modify `src/agents/live_trader.py`)**:
     By default, trade execution is simulated. To enable real trades:
       * Open `src/agents/live_trader.py`.
-      * Locate the `--- ACTUAL BINANCE API CALL (UNCOMMENT TO ENABLE REAL TRADES) ---` sections within the `process_and_act` function (for `order_market_buy`, `order_market_sell`, and emergency liquidation).
-      * **Uncomment** the `order = binance_api_client.order_market_buy(...)` and `order = binance_api_client.order_market_sell(...)` lines.
-      * Ensure the `quantity` parameter passed to these calls is correctly quantized based on Binance's rules (the script includes `quantize_quantity` helpers).
+      * Locate the `--- ACTUAL BINANCE API CALL (UNCOMMENT TO ENABLE REAL TRADES) ---` sections within the `_execute_trade` function.
+      * **Uncomment** the actual `self.client.order_limit_buy(...)` and `self.client.order_limit_sell(...)` lines.
+      * Ensure the `quantity` parameter passed to these calls is correctly quantized based on Binance's rules (the script includes `quantize_quantity` helpers if implemented).
 3.  **Run the live trader**:
     ```bash
-    python src/agents/live_trader.py
+    python -m src.agents.live_trader
     ```
       * The script will connect to the Binance WebSocket, start fetching real-time ticks, and when the agent makes a decision, it will attempt to send real orders to your configured Binance account (Testnet or Mainnet).
       * Console output will show received ticks, agent decisions, and the status of order attempts.
 
 ## Troubleshooting
 
-  * **`ModuleNotFoundError`**: Ensure all `.py` files are in their correct subdirectories under `src/` and that your `PYTHONPATH` is configured correctly (e.g., running from the project root). Also, confirm all dependencies listed in "Environment Setup" are installed.
+  * **`ModuleNotFoundError`**: Ensure you are running scripts from the **project root directory** using the `python -m` command. This ensures Python can correctly find all modules within the `src` package. Also, confirm all dependencies listed in "Environment Setup" are installed.
   * **`TypeError` in `pd.to_datetime` related to `tz` keyword**: This can occur with specific pandas versions. Ensure you're using `pd.to_datetime(...).tz_localize('UTC')` for robustness if directly passing a timezone string is problematic.
   * **`FileNotFoundError` for config files**: Ensure all default `.yaml` files exist in `configs/defaults/` as specified.
   * **`BinanceAPIException` (during trade execution)**: Check your API keys and secrets. Ensure they are for the correct network (Testnet vs. Mainnet) and have sufficient permissions. Verify trading pair symbols and quantities adhere to Binance's exchange rules (e.g., minimum trade amount, decimal precision). Adjust `recv_window_ms` in `binance_api_client` section of `config.yaml` if you get timestamp errors.
   * **`TA-Lib` Installation Issues**: Refer to the "TA-Lib Installation" section in this README for platform-specific instructions, especially for the C library.
   * **`AssertionError` in tests related to floating-point comparisons**: Use `pytest.approx` for comparing floating-point numbers in tests due to precision variations.
   * **Tests failing due to `MagicMock` type errors**: Ensure your mocked objects return the correct data types (e.g., integers for timestamps, floats for prices) when numerical operations are expected.
-
