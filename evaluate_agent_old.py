@@ -16,31 +16,24 @@ from stable_baselines3 import PPO
 # from sb3_contrib import RecurrentPPO
 
 from stable_baselines3.common.monitor import Monitor # For wrapping the environment to get episode info
-from stable_baselines3.common.vec_env import VecNormalize # Import VecNormalize for observation standardization
+from stable_baselines3.common.vec_env import VecNormalize # NEW: Import VecNormalize
 
 # Import custom modules from the project.
 try:
     from base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
-    # Import relevant default configs for merging and hashing consistency
-    from train_simple_agent import ( # Use the new train_simple_agent's defaults
-        DEFAULT_RUN_SETTINGS as TRAIN_SCRIPT_DEFAULT_RUN_SETTINGS,
-        DEFAULT_ENV_CONFIG as TRAIN_SCRIPT_DEFAULT_ENV_CONFIG,
-        DEFAULT_PPO_PARAMS as TRAIN_SCRIPT_DEFAULT_PPO_PARAMS,
-        DEFAULT_BINANCE_SETTINGS as TRAIN_SCRIPT_DEFAULT_BINANCE_SETTINGS,
-        DEFAULT_EVALUATION_DATA_SETTINGS as TRAIN_SCRIPT_DEFAULT_EVALUATION_DATA_SETTINGS,
-        DEFAULT_HASH_CONFIG_KEYS as TRAIN_SCRIPT_DEFAULT_HASH_CONFIG_KEYS
-    )
+    # Import DEFAULT_TRAIN_CONFIG from train_simple_agent to ensure consistent hashing logic
+    from train_simple_agent import DEFAULT_TRAIN_CONFIG as TRAIN_SCRIPT_FULL_DEFAULT_CONFIG
     from utils import (
         load_config,
         merge_configs,
         convert_to_native_types,
-        load_tick_data_for_range, # Use your updated data loading functions
-        load_kline_data_for_range, # Use your updated data loading functions
+        fetch_and_cache_kline_data, # Use your existing data fetching functions
+        fetch_continuous_aggregate_trades, # Use your existing data fetching functions
         resolve_model_path # For finding the trained model to evaluate.
     )
-    from custom_wrappers import FlattenAction # Import your custom wrapper
+    from custom_wrappers import FlattenAction # Import your new custom wrapper
 except ImportError as e:
-    print(f"CRITICAL ERROR: Failed to import necessary modules. Ensure base_env.py, train_simple_agent.py, "
+    print(f"CRITICAL ERROR: Failed to import necessary modules. Ensure simple_trading_env.py, train_simple_agent.py, "
           f"utils.py, and custom_wrappers.py are accessible in the same directory or via PYTHONPATH. Error: {e}")
     import sys
     sys.exit(1)
@@ -50,25 +43,25 @@ except ImportError as e:
 DEFAULT_EVAL_CONFIG = {
     "run_settings": {
         "log_dir_base": "./logs/ppo_trading/", # Base directory where trained models are saved
-        "model_name": "tick_trading_agent", # Model name used in training to derive path
+        "model_name": "tick_trading_agent", # Model name to derive path
         "log_level": "normal", # "none", "normal", "detailed" for eval script's verbosity
         "eval_log_dir": "./logs/evaluation_runs/", # Directory for evaluation specific logs/charts
         "model_path": None, # Explicit path to the model .zip file (optional). If None, uses resolve_model_path.
         "alt_model_path": None, # Alternative explicit model path (e.g., final model if best is primary).
     },
-    "evaluation_data": { # Specific dates for evaluation data (will be merged with config.yaml)
-        "start_date_kline_eval": "2024-04-01",
-        "end_date_kline_eval": "2024-04-07",
-        "start_date_tick_eval": "2024-04-01",
-        "end_date_tick_eval": "2024-04-07",
+    "evaluation_data": { # Specific dates for evaluation data
+        "start_date_kline_eval": "2024-01-04", # Example: period after training/validation.
+        "end_date_kline_eval": "2024-01-05",
+        "start_date_tick_eval": "2024-01-04 00:00:00",
+        "end_date_tick_eval": "2024-01-05 00:00:00",
     },
     "n_evaluation_episodes": 3,         # Default number of episodes to run for evaluation.
-    "deterministic_prediction": True,   # Whether the agent should use deterministic actions (True for eval).
+    "deterministic_prediction": True,   # Whether the agent should use deterministic actions.
     "print_step_info_freq": 50,         # Frequency to print step information if log_level is "normal".
     "binance_settings": {               # Settings for Binance data.
-        "api_key": None, # Will default to env var if None
-        "api_secret": None, # Will default to env var if None
-        "testnet": True,               # Default to Testnet for safety, change in config.yaml for mainnet
+        "api_key": os.environ.get("BINANCE_API_KEY"), # Get from env var or config
+        "api_secret": os.environ.get("BINANCE_API_SECRET"), # Get from env var or config
+        "testnet": False,               # Default to Mainnet, change in config.yaml for testnet
         "historical_cache_dir": "./binance_data_cache/", # Shared cache dir
         "default_symbol": "BTCUSDT",
         "historical_interval": "1h",
@@ -88,9 +81,6 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
         print("No trade history to plot.")
         return
 
-    # Filter out 'initial_balance' events as they don't represent a trade signal on the chart
-    trade_events = [t for t in trade_history if t.get('type') not in ['initial_balance', 'sell_eof_auto', 'sell_ruin_auto']]
-
     # Extract data for plotting
     equity_history = []
     balance_history = []
@@ -100,7 +90,7 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
     sell_prices = []
 
     # Process trade history for plotting
-    for t_entry in trade_history: # Use full trade_history for equity/balance tracking
+    for t_entry in trade_history:
         # Convert time to datetime object for plotting
         entry_time = pd.to_datetime(t_entry['time']) if 'time' in t_entry else None
         if entry_time is None: continue # Skip if no time available
@@ -109,38 +99,32 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
         if 'equity' in t_entry and 'balance' in t_entry:
             equity_history.append({'time': entry_time, 'equity': t_entry['equity'], 'balance': t_entry['balance']})
 
-    for t_event in trade_events: # Use filtered trade_events for buy/sell markers
-        entry_time = pd.to_datetime(t_event['time'])
-        if t_event.get('type') == 'buy':
+        # Collect buy/sell signals
+        if t_entry.get('type') == 'buy':
             trade_times_buy.append(entry_time)
-            buy_prices.append(t_event['price'])
-        elif t_event.get('type') == 'sell':
+            buy_prices.append(t_entry['price'])
+        elif t_entry.get('type') == 'sell':
             trade_times_sell.append(entry_time)
-            sell_prices.append(t_event['price'])
+            sell_prices.append(t_entry['price'])
     
     # Create DataFrame for equity/balance history, ensuring time index
     if equity_history:
         equity_balance_df = pd.DataFrame(equity_history).set_index('time').sort_index()
-        # Drop duplicates in index, keeping the last one for potential multiple events at same time
-        equity_balance_df = equity_balance_df[~equity_balance_df.index.duplicated(keep='last')]
     else:
         equity_balance_df = pd.DataFrame(columns=['equity', 'balance'], index=pd.to_datetime([]))
 
 
     # Filter price_data to the relevant evaluation period based on min/max of trade history
+    # Or, if trade_history is empty, just use the original price_data range
     if not price_data.empty:
         if not isinstance(price_data.index, pd.DatetimeIndex):
             price_data.index = pd.to_datetime(price_data.index, utc=True)
         price_data_plot = price_data.sort_index()
 
         if not equity_balance_df.empty:
-            min_plot_time = equity_balance_df.index.min()
-            max_plot_time = equity_balance_df.index.max()
-            # Extend plot range slightly beyond trade history for visual context
-            min_plot_time -= pd.Timedelta(minutes=5)
-            max_plot_time += pd.Timedelta(minutes=5)
-            
-            # Ensure the price data covers the full range observed by the agent, potentially extending slightly
+            min_plot_time = min(price_data_plot.index.min(), equity_balance_df.index.min())
+            max_plot_time = max(price_data_plot.index.max(), equity_balance_df.index.max())
+            # Ensure the price data covers the full range observed by the agent
             price_data_plot = price_data_plot[(price_data_plot.index >= min_plot_time) & (price_data_plot.index <= max_plot_time)]
         # Reindex price_data_plot to have a consistent frequency for plotting if needed,
         # but for scattered points and line, original index should be fine.
@@ -191,46 +175,38 @@ def main():
     running evaluation episodes, and reporting/saving results.
     """
     # --- 1. Load and Merge Configurations ---
-    yaml_config_full = load_config("config.yaml") # Load from current directory
-
-    # Start with default eval config, then merge with config.yaml
-    # Use training script's defaults for run settings, ppo params, binance settings etc.,
-    # to ensure consistency in parsing `resolve_model_path`.
-    effective_eval_config = {
-        "run_settings": merge_configs(DEFAULT_EVAL_CONFIG["run_settings"], yaml_config_full.get("run_settings")),
-        "evaluation_data": merge_configs(DEFAULT_EVAL_CONFIG["evaluation_data"], yaml_config_full.get("evaluation_data")),
-        "binance_settings": merge_configs(DEFAULT_EVAL_CONFIG["binance_settings"], yaml_config_full.get("binance_settings")),
-        "environment": merge_configs(DEFAULT_EVAL_CONFIG["environment"], yaml_config_full.get("environment")),
-    }
+    yaml_config_full = load_config()
     
+    # Merge DEFAULT_EVAL_CONFIG with the full YAML config.
+    effective_eval_config = merge_configs(DEFAULT_EVAL_CONFIG, yaml_config_full)
+
     current_log_level = effective_eval_config.get("run_settings", {}).get("log_level", "normal")
     
-    # Apply environment overrides specified in the evaluation_data section of config.yaml
+    # --- 2. Prepare Environment Configuration for Evaluation Instance ---
+    eval_env_config_for_instance = DEFAULT_ENV_CONFIG.copy()
+    
+    if "environment" in yaml_config_full:
+        eval_env_config_for_instance = merge_configs(eval_env_config_for_instance, yaml_config_full["environment"], "environment_base_yaml")
+    
     evaluation_section_from_yaml = yaml_config_full.get("evaluation_data", {})
     if "environment_overrides" in evaluation_section_from_yaml and evaluation_section_from_yaml["environment_overrides"]:
-         effective_eval_config["environment"] = merge_configs(effective_eval_config["environment"], evaluation_section_from_yaml["environment_overrides"])
+         eval_env_config_for_instance = merge_configs(eval_env_config_for_instance, evaluation_section_from_yaml["environment_overrides"], "environment_evaluation_override")
 
-    effective_eval_config["environment"]["log_level"] = "none" # Always suppress env logging during eval
-    effective_eval_config["environment"]["custom_print_render"] = "none"
+    eval_env_config_for_instance["log_level"] = current_log_level
+    eval_env_config_for_instance["custom_print_render"] = "none"
 
     if current_log_level == "detailed":
-        print(f"Final effective evaluation config:\n{json.dumps(convert_to_native_types(effective_eval_config), indent=2)}")
+        print(f"Final environment config for instance: {json.dumps(convert_to_native_types(eval_env_config_for_instance), indent=2)}")
 
-    # --- 2. Resolve Model Path ---
-    # `resolve_model_path` needs the full training config defaults for hashing consistency.
-    # We pass the loaded config to it, and the training script's defaults as fallbacks.
+    effective_eval_config["environment"] = eval_env_config_for_instance
+
+
+    # --- 3. Resolve Model Path ---
     model_load_path, alt_model_path_info = resolve_model_path(
         eval_specific_config=effective_eval_config["run_settings"],
-        full_yaml_config=yaml_config_full, # Use the directly loaded YAML content
-        train_script_fallback_config={ # Construct a dict mirroring train_simple_agent's logic
-            "run_settings": TRAIN_SCRIPT_DEFAULT_RUN_SETTINGS,
-            "environment": TRAIN_SCRIPT_DEFAULT_ENV_CONFIG,
-            "ppo_params": TRAIN_SCRIPT_DEFAULT_PPO_PARAMS,
-            "binance_settings": TRAIN_SCRIPT_DEFAULT_BINANCE_SETTINGS,
-            "evaluation_data": TRAIN_SCRIPT_DEFAULT_EVALUATION_DATA_SETTINGS,
-            "hash_config_keys": TRAIN_SCRIPT_DEFAULT_HASH_CONFIG_KEYS
-        },
-        env_script_fallback_config=DEFAULT_ENV_CONFIG, # Used for environment hashing
+        full_yaml_config=yaml_config_full,
+        train_script_fallback_config=TRAIN_SCRIPT_FULL_DEFAULT_CONFIG,
+        env_script_fallback_config=DEFAULT_ENV_CONFIG,
         log_level=current_log_level
     )
 
@@ -252,31 +228,32 @@ def main():
         json.dump(convert_to_native_types(effective_eval_config), f, indent=4)
     if current_log_level != "none":
         print("Effective evaluation configuration saved to effective_eval_config.json")
+        if current_log_level == "detailed":
+            print("Effective Evaluation Config (detailed):", json.dumps(convert_to_native_types(effective_eval_config), indent=2))
 
-    # --- 3. Prepare Evaluation Data ---
+    # --- 4. Prepare Evaluation Data (using your current utils.py functions) ---
     eval_binance_settings = effective_eval_config["binance_settings"]
     eval_data_settings = effective_eval_config["evaluation_data"]
-
-    # Use the kline_price_features from the effective environment config
-    kline_features_for_data_fetch = effective_eval_config["environment"]["kline_price_features"]
 
     print("\n--- Fetching and preparing K-line evaluation data ---")
     eval_kline_df = pd.DataFrame() # Initialize
     try:
-        eval_kline_df = load_kline_data_for_range(
+        eval_kline_df = fetch_and_cache_kline_data(
             symbol=eval_binance_settings["default_symbol"],
             interval=eval_binance_settings["historical_interval"],
             start_date_str=eval_data_settings["start_date_kline_eval"],
             end_date_str=eval_data_settings["end_date_kline_eval"],
             cache_dir=eval_binance_settings["historical_cache_dir"],
-            price_features=kline_features_for_data_fetch, # Use env's features for TA calculation
-            # Pass API keys explicitly if they are not None in effective_eval_config
-            # load_kline_data_for_range and load_tick_data_for_range do not accept api_key/secret directly.
-            # They use the values from the environment variables or the Client() constructor defaults in utils.py.
-            # This is okay as long as utils.py handles it.
+            price_features_to_add=eval_env_config_for_instance["kline_price_features"], # Use env's features for TA calculation
+            api_key=eval_binance_settings["api_key"],
+            api_secret=eval_binance_settings["api_secret"],
+            testnet=eval_binance_settings["testnet"],
+            cache_file_type=eval_binance_settings.get("cache_file_type", "parquet"),
+            log_level=current_log_level,
+            api_request_delay_seconds=eval_binance_settings.get("api_request_delay_seconds", 0.2)
         )
         if eval_kline_df.empty:
-            raise ValueError("K-line evaluation data not loaded or is empty.")
+            raise ValueError("K-line evaluation data not loaded.")
         print(f"K-line eval data loaded: {eval_kline_df.shape} from {eval_kline_df.index.min()} to {eval_kline_df.index.max()}")
     except Exception as e:
         print(f"ERROR: K-line evaluation data not loaded. Details: {e}")
@@ -286,93 +263,91 @@ def main():
     print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
     eval_tick_df = pd.DataFrame() # Initialize
     try:
-        eval_tick_df = load_tick_data_for_range(
+        eval_tick_df = fetch_continuous_aggregate_trades(
             symbol=eval_binance_settings["default_symbol"],
             start_date_str=eval_data_settings["start_date_tick_eval"],
             end_date_str=eval_data_settings["end_date_tick_eval"],
             cache_dir=eval_binance_settings["historical_cache_dir"],
+            api_key=eval_binance_settings["api_key"],
+            api_secret=eval_binance_settings["api_secret"],
+            testnet=eval_binance_settings["testnet"],
+            cache_file_type=eval_binance_settings.get("cache_file_type", "parquet"),
+            log_level=current_log_level,
+            api_request_delay_seconds=eval_binance_settings.get("api_request_delay_seconds", 0.2)
         )
         if eval_tick_df.empty:
-            raise ValueError("Tick evaluation data not loaded or is empty.")
+            raise ValueError("Tick evaluation data not loaded.")
         print(f"Tick eval data loaded: {eval_tick_df.shape} from {eval_tick_df.index.min()} to {eval_tick_df.index.max()}")
     except Exception as e:
         print(f"ERROR: Tick evaluation data not loaded. Details: {e}")
-        traceback_str = traceback.format_exc()
-        print(traceback_str)
+        traceback.print_exc()
         exit(1)
 
-    # --- 4. Create Evaluation Environment and Load Model ---
+    # --- 5. Create Evaluation Environment and Load Model ---
     eval_env = None
     try:
-        # Create the base environment instance using the effective environment config
-        base_eval_env = SimpleTradingEnv(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=effective_eval_config["environment"])
+        # Create the base environment
+        base_eval_env = SimpleTradingEnv(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=eval_env_config_for_instance)
         # Apply the FlattenAction wrapper
-        wrapped_eval_env = FlattenAction(base_eval_env)
+        wrapped_eval_env = FlattenAction(base_eval_env) # Apply the wrapper here
         
-        # Load VecNormalize statistics from the training run's log directory
-        # The model's path is something like logs/ppo_trading/<HASH_MODELNAME>/best_model/best_model.zip
-        # So the VecNormalize stats are in logs/ppo_trading/<HASH_MODELNAME>/vec_normalize.pkl
-        model_training_run_dir = os.path.dirname(os.path.dirname(model_load_path)) # Go up two levels
-        vec_normalize_stats_path = os.path.join(model_training_run_dir, "vec_normalize.pkl")
+        # NEW: Apply VecNormalize for observation standardization
+        # During evaluation, it's crucial to load the normalization statistics from training.
+        # The `VecNormalize` object is saved as 'vec_normalize.pkl' in the model's directory.
+        # We need to determine the directory of the `model_load_path` to find the .pkl file.
+        model_dir = os.path.dirname(model_load_path)
+        vec_normalize_stats_path = os.path.join(model_dir, "vec_normalize.pkl")
         
-        # Instantiate VecNormalize. norm_reward=False for this env.
-        # clip_obs must be consistent with training (typically 10.0 or from SB3 defaults)
-        eval_env_normalized = VecNormalize(wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
+        # Instantiate VecNormalize with norm_obs=True, and then load the statistics
+        eval_env_normalized = VecNormalize(wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.) # NEW
         
         if os.path.exists(vec_normalize_stats_path):
-            eval_env_normalized = VecNormalize.load(vec_normalize_stats_path, eval_env_normalized) # Load stats into the new instance
-            # Ensure evaluation environment is in evaluation mode (important for VecNormalize)
-            eval_env_normalized.training = False # This disables updating mean/std
-            eval_env_normalized.norm_reward = False # Ensure reward normalization is off for evaluation if it was during training
-            if current_log_level != "none": print(f"VecNormalize statistics loaded and applied from: {vec_normalize_stats_path}")
+            eval_env_normalized = VecNormalize.load(vec_normalize_stats_path, eval_env_normalized) # Load stats into the new instance # NEW
+            if current_log_level != "none": print(f"VecNormalize statistics loaded from: {vec_normalize_stats_path}")
         else:
-            print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Evaluation observations will NOT be normalized consistently with training. This can lead to poor performance.")
-            print("Consider ensuring `vec_normalize.pkl` is saved by `train_simple_agent.py` in the model's training log directory.")
-            # If stats are not found, the agent will receive unnormalized observations, likely leading to poor performance.
-            # You might want to exit here if consistent normalization is critical.
-            # For now, it proceeds but logs a strong warning.
+            if current_log_level != "none": print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Evaluation observations will NOT be normalized consistently with training. This can lead to poor performance.")
+            # If stats are not found, it's better to explicitly normalize to avoid issues.
+            # But the agent might perform poorly if it was trained on normalized data.
+            # For robust evaluation, it's critical these stats are present.
 
-        # Monitor should wrap the final environment passed to the model (VecNormalize in this case)
-        eval_env = Monitor(eval_env_normalized, filename=os.path.join(eval_log_dir, "eval_monitor.csv"))
+        eval_env = Monitor(eval_env_normalized, filename=os.path.join(eval_log_dir, "eval_monitor.csv")) # Wrap with Monitor
         
         print("\nEvaluation environment created successfully and configured for normalization.")
     except Exception as e:
         print(f"Error creating evaluation environment: {e}")
-        traceback_str = traceback.format_exc()
-        print(traceback_str)
+        traceback.print_exc()
         if eval_env: eval_env.close()
         exit(1)
 
     try:
-        # Load the trained model (PPO expects the wrapped env).
-        # When loading a model trained with VecNormalize, you generally pass the VecNormalize env.
-        model = PPO.load(model_load_path, env=eval_env)
+        # Load the trained model (PPO expects the wrapped env)
+        # The env passed to model.load() should be a VecEnv, if the model was trained with VecEnv.
+        # And if it was trained with VecNormalize, the env here should also be VecNormalize
+        model = PPO.load(model_load_path, env=eval_env) # Pass the Monitor-wrapped (VecNormalize) env
+        # If using RecurrentPPO, change above to: model = RecurrentPPO.load(model_load_path, env=eval_env)
         print("Model loaded successfully for evaluation.")
     except Exception as e:
         print(f"Error loading agent model from '{model_load_path}': {e}")
-        traceback_str = traceback.format_exc()
-        print(traceback_str)
+        traceback.print_exc()
         eval_env.close()
         return
 
-    # --- 5. Run Evaluation Episodes ---
+    # --- 6. Run Evaluation Episodes ---
     num_eval_episodes = effective_eval_config.get('n_evaluation_episodes', 3)
     print(f"Starting evaluation for {num_eval_episodes} episodes...")
     all_episodes_rewards, all_episodes_profits_pct = [], []
     all_combined_trade_history = [] # To store all trade history for plotting and saving
 
     for episode in range(num_eval_episodes):
-        obs, info = eval_env.reset() # Reset the VecNormalize env
+        obs, info = eval_env.reset()
         
+        # For RecurrentPPO, you would manage LSTM states here:
+        # lstm_states = None
+        # episode_starts = np.array([True])
+
         terminated, truncated = False, False
         episode_reward, current_episode_step = 0, 0
-        
-        # Access initial_balance from the unwrapped SimpleTradingEnv instance
-        # This is complex due to multiple wrappers: VecNormalize -> Monitor -> FlattenAction -> SimpleTradingEnv
-        base_env_instance = eval_env.venv.envs[0].env.env # For Monitor(VecNormalize(FlattenAction(SimpleTradingEnv)))
-        initial_balance_this_episode = base_env_instance.initial_balance
-
-        print(f"\n--- Evaluation Episode {episode + 1}/{num_eval_episodes} (Initial Balance: {initial_balance_this_episode:.2f}) ---")
+        print(f"\n--- Evaluation Episode {episode + 1}/{num_eval_episodes} ---")
 
         while not (terminated or truncated):
             # action_array from model.predict will be the flattened action (e.g., np.array([action_choice_float, profit_target_float]))
@@ -382,27 +357,26 @@ def main():
             # The FlattenAction wrapper will internally convert it back to (discrete, Box) tuple for SimpleTradingEnv.
             obs, reward, terminated, truncated, info = eval_env.step(action_array)
             
-            # info from monitor is a list of dicts, so we take the first one (assuming n_envs=1)
-            info = info[0] 
-
             # For logging, extract the discrete action and profit target from the `action_array`
             discrete_action_for_log = int(np.round(action_array[0])) # Convert back to discrete (0, 1, 2) for logging
             profit_target_param_for_log = action_array[1] # The continuous profit target
             
-            episode_reward += reward[0] # Reward from VecEnv is an array, take first element for single env
+            episode_reward += reward
             current_episode_step += 1
             
             if current_log_level == "normal" and \
                  current_episode_step % effective_eval_config.get("print_step_info_freq", 50) == 0 :
-                # Access the underlying SimpleTradingEnv's ACTION_MAP: VecNormalize -> Monitor -> FlattenAction -> SimpleTradingEnv
-                print(f"  Step: {info.get('current_step')}, Action: {base_env_instance.ACTION_MAP.get(discrete_action_for_log)}, "
-                      f"Reward: {reward[0]:.3f}, Equity: {info.get('equity',0):.2f}")
+                # Access the underlying SimpleTradingEnv's ACTION_MAP using .env.env (VecNormalize wraps Monitor which wraps FlattenAction which wraps SimpleTradingEnv)
+                print(f"  Step: {info.get('current_step')}, Action: {eval_env.env.env.env.ACTION_MAP.get(discrete_action_for_log)}, "
+                      f"Reward: {reward:.3f}, Equity: {info.get('equity',0):.2f}")
             elif current_log_level == "detailed":
-                print(f"  Step: {info.get('current_step')}, Action: {base_env_instance.ACTION_MAP.get(discrete_action_for_log)}, ProfitTgt: {profit_target_param_for_log:.4f}, "
-                      f"Reward: {reward[0]:.3f}, Equity: {info.get('equity',0):.2f}, Pos: {info.get('position_open')}")
+                print(f"  Step: {info.get('current_step')}, Action: {eval_env.env.env.env.ACTION_MAP.get(discrete_action_for_log)}, ProfitTgt: {profit_target_param_for_log:.4f}, "
+                      f"Reward: {reward:.3f}, Equity: {info.get('equity',0):.2f}, Pos: {info.get('position_open')}")
 
-        final_equity = info.get('equity', initial_balance_this_episode)
-        episode_profit_pct = ((final_equity - initial_balance_this_episode) / (initial_balance_this_episode + 1e-9)) * 100
+        final_equity = info.get('equity', eval_env.initial_balance)
+        # Access initial_balance from the unwrapped SimpleTradingEnv
+        initial_balance_env = eval_env.env.env.env.initial_balance # Access initial_balance from the base env
+        episode_profit_pct = ((final_equity - initial_balance_env) / (initial_balance_env + 1e-9)) * 100
 
         print(f"Episode finished. Steps: {current_episode_step}. Reward: {episode_reward:.2f}. "
               f"Final Equity: {final_equity:.2f} Profit: {episode_profit_pct:.2f}%")
@@ -410,12 +384,11 @@ def main():
         all_episodes_profits_pct.append(episode_profit_pct)
 
         # Append current episode's trade history to the combined list
-        # Access trade_history from the base SimpleTradingEnv instance
-        all_combined_trade_history.extend(base_env_instance.trade_history)
+        all_combined_trade_history.extend(eval_env.env.env.env.trade_history) # Access trade_history from the base env
 
-        if current_log_level == "detailed" or (base_env_instance.trade_history and len(base_env_instance.trade_history) > 1):
+        if current_log_level == "detailed" or (eval_env.env.env.env.trade_history and len(eval_env.env.env.env.trade_history) > 1):
              print(f"--- Trade History Ep {episode+1} (Last 10 trades if any) ---")
-             temp_episode_trades_native_for_print = convert_to_native_types(base_env_instance.trade_history)
+             temp_episode_trades_native_for_print = convert_to_native_types(eval_env.env.env.env.trade_history)
              relevant_trades = [t for t in temp_episode_trades_native_for_print if t.get('type') != 'initial_balance']
              if relevant_trades:
                 [print(f"  {t}") for t in relevant_trades[-10:]]
@@ -424,7 +397,7 @@ def main():
         elif current_log_level == "normal":
             print(f"  Total trades this episode: {info.get('num_trades_in_episode',0)}")
 
-    # --- 6. Save Full Trade History for All Episodes ---
+    # --- 7. Save Full Trade History for All Episodes ---
     trade_history_filename = f"evaluation_{eval_run_id}_trade_history.json"
     trade_history_save_path = os.path.join(eval_log_dir, trade_history_filename)
 
@@ -437,10 +410,9 @@ def main():
             print(f"\nFull evaluation trade history saved to: {trade_history_save_path}")
         except Exception as e:
             print(f"Error saving trade history: {e}")
-            traceback_str = traceback.format_exc()
-            print(traceback_str)
+            traceback.print_exc()
 
-    # --- 7. Print Overall Evaluation Summary ---
+    # --- 8. Print Overall Evaluation Summary ---
     print("\n--- Overall Evaluation Summary ---")
     num_episodes_actually_run = len(all_episodes_rewards)
     if num_episodes_actually_run > 0:
@@ -453,7 +425,7 @@ def main():
     else:
         print("No evaluation episodes completed or no data to summarize.")
 
-    # --- 8. Plotting ---
+    # --- 9. Plotting ---
     print("\n--- Generating Performance Chart ---")
     plot_price_data_series = eval_tick_df['Price'].copy()
     plot_price_data_series.name = eval_binance_settings['default_symbol'] # Set series name for plot title
