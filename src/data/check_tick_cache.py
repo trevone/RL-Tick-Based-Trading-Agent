@@ -1,3 +1,4 @@
+# src/data/check_tick_cache.py
 import os
 import pandas as pd
 import numpy as np
@@ -155,12 +156,13 @@ def parse_filename_for_metadata(filename):
     
     return None
 
-def validate_daily_data(filepath: str) -> tuple[bool, str]:
+def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool, str]: # MODIFIED: Added log_level
     """
     Performs various checks on a single daily Parquet cache file for aggregate trades OR klines.
     Returns True and a success message if all checks pass, False and an error message otherwise.
     """
-    print(f"\n--- Checking File: {filepath} ---")
+    if log_level != "none":
+        print(f"\n--- Checking File: {filepath} ---") # MODIFIED: Conditional print
     
     df = pd.DataFrame()
     max_read_retries = 10
@@ -168,19 +170,22 @@ def validate_daily_data(filepath: str) -> tuple[bool, str]:
 
     # Check for 0-byte file explicitly to avoid pyarrow.lib.ArrowInvalid
     if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
-        print(f"  File is 0 bytes: {filepath}. Treating as empty but valid.")
+        if log_level != "none":
+            print(f"  File is 0 bytes: {filepath}. Treating as empty but valid.") # MODIFIED: Conditional print
         # Return an empty DataFrame, then the df.empty check will handle it.
         return True, "DataFrame is empty (0 bytes). (May be valid for periods with no trades/klines)."
 
     for i in range(max_read_retries):
         try:
             df = pd.read_parquet(filepath)
-            print(f"  Successfully read Parquet file after {i+1} attempt(s). Shape: {df.shape}")
+            if log_level != "none":
+                print(f"  Successfully read Parquet file after {i+1} attempt(s). Shape: {df.shape}") # MODIFIED: Conditional print
             if df.empty:
                 return True, "DataFrame is empty after reading. (May be valid for periods with no trades/klines)."
             break
         except FileNotFoundError:
-            print(f"  WARNING: File not found during read attempt {i+1}/{max_read_retries}. Retrying in {read_retry_delay_sec}s...")
+            if log_level != "none":
+                print(f"  WARNING: File not found during read attempt {i+1}/{max_read_retries}. Retrying in {read_retry_delay_sec}s...") # MODIFIED: Conditional print
             time.sleep(read_retry_delay_sec)
         except Exception as e:
             traceback.print_exc()
@@ -189,17 +194,16 @@ def validate_daily_data(filepath: str) -> tuple[bool, str]:
         return False, f"File did not become readable after {max_read_retries} attempts. File not found or persistently inaccessible."
 
     file_size_bytes = os.path.getsize(filepath)
-    # The check for 0-byte file is now done before read_parquet, so this line is less critical
-    # if file_size_bytes == 0 and not df.empty:
-    #    return False, "File is 0 bytes but DataFrame was not empty after reading (inconsistent)."
-    print(f"  File Size: {file_size_bytes / 1024:.2f} KB")
+    if log_level != "none":
+        print(f"  File Size: {file_size_bytes / 1024:.2f} KB") # MODIFIED: Conditional print
 
 
     metadata = parse_filename_for_metadata(filepath)
     if metadata:
-        print(f"  Parsed Metadata: Data Type={metadata['data_type']}, Symbol={metadata['symbol']}, Start={metadata['start_time_utc']}, End={metadata['end_time_utc']}")
-        if metadata['data_type'] == 'kline':
-            print(f"    Interval={metadata['interval']}, Features={metadata['features']}")
+        if log_level != "none":
+            print(f"  Parsed Metadata: Data Type={metadata['data_type']}, Symbol={metadata['symbol']}, Start={metadata['start_time_utc']}, End={metadata['end_time_utc']}") # MODIFIED: Conditional print
+            if metadata['data_type'] == 'kline':
+                print(f"    Interval={metadata['interval']}, Features={metadata['features']}") # MODIFIED: Conditional print
     else:
         return False, f"Could not parse filename '{os.path.basename(filepath)}' for metadata. It does not match the expected pattern."
 
@@ -340,6 +344,12 @@ if __name__ == "__main__":
         default=DATA_CACHE_DIR, # Use imported DATA_CACHE_DIR
         help=f"Directory containing cache files. Default: {DATA_CACHE_DIR}"
     )
+    parser.add_argument( # NEW: Added log_level argument for main script
+        "--log_level",
+        default="normal",
+        choices=["none", "normal", "detailed"],
+        help="Level of console logging: 'none', 'normal', 'detailed'. Default: 'normal'."
+    )
     args = parser.parse_args()
 
     cache_directory = args.cache_dir
@@ -355,7 +365,7 @@ if __name__ == "__main__":
             print(f"ERROR: Specified file '{args.filepath}' is not a .parquet file.")
             exit(1)
         
-        is_valid, msg = validate_daily_data(args.filepath)
+        is_valid, msg = validate_daily_data(args.filepath, log_level=args.log_level) # MODIFIED: Pass log_level
         print(msg)
         if not is_valid:
             exit(1)
@@ -374,7 +384,7 @@ if __name__ == "__main__":
             overall_passed = 0
             overall_failed = 0
             for filepath in found_files:
-                is_valid, msg = validate_daily_data(filepath)
+                is_valid, msg = validate_daily_data(filepath, log_level=args.log_level) # MODIFIED: Pass log_level
                 print(msg)
                 if is_valid:
                     overall_passed += 1

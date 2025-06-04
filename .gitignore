@@ -7,3 +7,4 @@ agg_trades.txt
 klines.txt
 train_output.txt
 pytest.txt
+data_cache/

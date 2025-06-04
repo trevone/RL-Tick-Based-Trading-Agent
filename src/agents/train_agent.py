@@ -1,4 +1,4 @@
-# train_agent.py
+# src/agents/train_agent.py
 
 import os
 import json
@@ -166,6 +166,7 @@ def train_agent(
     interval = binance_settings["historical_interval"]
     kline_features = env_config["kline_price_features"]
     cache_dir = binance_settings["historical_cache_dir"]
+    tick_resample_interval_ms = env_config.get("tick_resample_interval_ms") # Get new parameter
 
     if current_log_level != "none": print(f"\n--- Fetching and preparing K-line training data ({symbol}, {interval}, {train_start_date_kline} to {train_end_date_kline}) ---")
     kline_df_train = pd.DataFrame() # Initialize
@@ -195,7 +196,8 @@ def train_agent(
             start_date_str=train_start_date_tick,
             end_date_str=train_end_date_tick,
             cache_dir=cache_dir,
-            binance_settings=binance_settings # Pass binance_settings for API keys/testnet
+            binance_settings=binance_settings, # Pass binance_settings for API keys/testnet
+            tick_resample_interval_ms=tick_resample_interval_ms # NEW: Pass resampling interval
         )
         if tick_df_train.empty:
             raise ValueError("Tick training data is empty. Cannot proceed with training.")
@@ -283,7 +285,8 @@ def train_agent(
             start_date_str=eval_start_date_tick,
             end_date_str=eval_end_date_tick,
             cache_dir=cache_dir,
-            binance_settings=binance_settings # Pass binance_settings for API keys/testnet
+            binance_settings=binance_settings, # Pass binance_settings for API keys/testnet
+            tick_resample_interval_ms=tick_resample_interval_ms # NEW: Pass resampling interval
         )
         if tick_df_eval.empty:
             if current_log_level != "none": print("WARNING: Evaluation tick data is empty. EvalCallback might not function correctly.")

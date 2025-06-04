@@ -1,4 +1,4 @@
-# evaluate_agent.py
+# src/agents/evaluate_agent.py
 import pytest # Import pytest for the fixture if not already imported by user
 import os
 import pandas as pd
@@ -233,6 +233,8 @@ def main():
 
     # Use the kline_price_features from the effective environment config
     kline_features_for_data_fetch = effective_eval_config["environment"]["kline_price_features"]
+    tick_resample_interval_ms = effective_eval_config["environment"].get("tick_resample_interval_ms") # NEW: Get resampling interval
+
 
     print("\n--- Fetching and preparing K-line evaluation data ---")
     eval_kline_df = pd.DataFrame() # Initialize
@@ -262,7 +264,8 @@ def main():
             start_date_str=eval_data_settings["start_date_tick_eval"],
             end_date_str=eval_data_settings["end_date_tick_eval"],
             cache_dir=DATA_CACHE_DIR, # Use DATA_CACHE_DIR
-            binance_settings=eval_binance_settings # Pass binance settings for API keys/testnet
+            binance_settings=eval_binance_settings, # Pass binance settings for API keys/testnet
+            tick_resample_interval_ms=tick_resample_interval_ms # NEW: Pass resampling interval
         )
         if eval_tick_df.empty:
             raise ValueError("Tick evaluation data is empty. Cannot proceed with evaluation.")
@@ -289,7 +292,7 @@ def main():
         
         # Instantiate VecNormalize. norm_reward=False for this env.
         # clip_obs must be consistent with training (typically 10.0 or from SB3 defaults)
-        eval_env_normalized = VecNormalize(wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
+        eval_env_normalized = VecNormalize(wrapped_eval_env, norm_obs=True, norm_reward=False, clip_obs=10.)
         
         if os.path.exists(vec_normalize_stats_path):
             eval_env_normalized = VecNormalize.load(vec_normalize_stats_path, eval_env_normalized) # Load stats into the new instance
@@ -392,7 +395,6 @@ def main():
 
         print(f"Episode finished. Steps: {current_episode_step}. Reward: {episode_reward:.2f}. "
               f"Final Equity: {final_equity:.2f} Profit: {episode_profit_pct:.2f}%")
-        all_episodes_rewards.append(episode_reward)
         all_episodes_profits_pct.append(episode_profit_pct)
 
         # Append current episode's trade history to the combined list

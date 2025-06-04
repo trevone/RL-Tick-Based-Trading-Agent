@@ -7,6 +7,7 @@ hash_config_keys:
     - kline_price_features
     - tick_feature_window_size
     - tick_features_to_use
+    - tick_resample_interval_ms # NEW: Include in hash calculation
     - initial_balance
     - commission_pct
     - base_trade_amount_ratio

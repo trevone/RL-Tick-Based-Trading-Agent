@@ -1,4 +1,4 @@
-# utils.py
+# src/data/utils.py
 import yaml
 import os
 import pandas as pd
@@ -318,7 +318,7 @@ def fetch_continuous_aggregate_trades(
             return pd.DataFrame()
 
     if log_level in ["normal", "detailed"]:
-        print(f"Fetching continuous aggregate trades for {symbol} from {start_date_str} to {end_date_str}.")
+        print(f"\nFetching continuous aggregate trades for {symbol} from {start_date_str} to {end_date_str}.")
 
     client = Client(api_key or os.environ.get('BINANCE_API_KEY'), 
                     api_secret or os.environ.get('BINANCE_API_SECRET'), 
@@ -464,10 +464,11 @@ def fetch_and_cache_tick_data(symbol: str, start_date_str: str, end_date_str: st
 
 # --- NEW: Function to load data for training, checking for missing days ---
 def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR,
-                             binance_settings: Dict = None) -> pd.DataFrame: # Added binance_settings
+                             binance_settings: Dict = None, tick_resample_interval_ms: int = None) -> pd.DataFrame: # Added tick_resample_interval_ms
     """
     Loads tick data (aggregate trades) for a given symbol and date range.
     Checks for and fetches any missing days within the range for training purposes.
+    Optionally performs time-based resampling on the tick data.
     """
     if binance_settings is None:
         binance_settings = {} # Use an empty dict if not provided
@@ -530,6 +531,50 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     combined_df = pd.concat(all_data_frames)
     combined_df = combined_df.sort_index()
     combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+
+    # --- NEW: Time-based Resampling Logic ---
+    if tick_resample_interval_ms:
+        if not isinstance(combined_df.index, pd.DatetimeIndex) or combined_df.index.tz is None:
+            combined_df.index = pd.to_datetime(combined_df.index, utc=True)
+
+        if combined_df.empty:
+            print(f"Warning: DataFrame is empty, cannot resample with interval '{tick_resample_interval_ms}'.")
+            return combined_df
+
+        try:
+            freq_str = f"{tick_resample_interval_ms}ms"
+            
+            # Define aggregation rules for different columns
+            agg_rules = {
+                'Price': 'last', # Last price in the interval
+                'Quantity': 'sum' # Sum of quantity in the interval
+            }
+            # Add other columns if they exist and define how to aggregate them
+            if 'IsBuyerMaker' in combined_df.columns:
+                # For boolean, taking the last, or mode, or a custom aggregation
+                # Here, we take the last to simplify
+                agg_rules['IsBuyerMaker'] = 'last' 
+
+            # Filter agg_rules to only include columns actually present in combined_df
+            valid_agg_rules = {col: rule for col, rule in agg_rules.items() if col in combined_df.columns}
+
+            resampled_df = combined_df.resample(freq_str).agg(valid_agg_rules)
+            
+            # Fill any NaNs that might result from resampling (intervals with no ticks)
+            # Use forward-fill then back-fill to handle gaps
+            resampled_df.ffill(inplace=True)
+            resampled_df.bfill(inplace=True)
+            resampled_df.fillna(0, inplace=True) # Final fill for any remaining NaNs (e.g., if df was entirely empty)
+
+
+            print(f"Tick data resampled from {combined_df.shape} to {resampled_df.shape} with interval {freq_str}.")
+            return resampled_df
+
+        except Exception as e:
+            print(f"Error resampling tick data with interval {tick_resample_interval_ms}ms: {e}. Returning original data.")
+            traceback.print_exc()
+            # Fallback to original combined_df if resampling fails
+            return combined_df
 
     return combined_df
 

@@ -1,4 +1,4 @@
-# live_trader.py
+# src/agents/live_trader.py
 
 import os
 import json
@@ -41,7 +41,8 @@ from src.data.utils import (
     merge_configs,
     convert_to_native_types,
     resolve_model_path,
-    fetch_and_cache_kline_data # Used for fetching initial kline context
+    fetch_and_cache_kline_data, # Used for fetching initial kline context
+    load_tick_data_for_range # NEW: Used for initial tick data load
 )
 
 
@@ -52,7 +53,7 @@ def load_default_configs_for_live_trading(config_dir="configs/defaults") -> dict
         os.path.join(config_dir, "run_settings.yaml"),
         os.path.join(config_dir, "environment.yaml"),
         os.path.join(config_dir, "binance_settings.yaml"),
-        os.path.join(config_dir, "live_trader_settings.yaml"), # New settings file for live trading
+        # os.path.join(config_dir, "live_trader_settings.yaml"), # This file might be missing or not standardized yet
         os.path.join(config_dir, "hash_keys.yaml"), # Needed for resolve_model_path
         os.path.join(config_dir, "ppo_params.yaml"), # Include all algo params for hashing to resolve model
         os.path.join(config_dir, "sac_params.yaml"),
@@ -79,7 +80,7 @@ class LiveTrader:
         self.run_settings = self.effective_config["run_settings"]
         self.env_config = self.effective_config["environment"]
         self.binance_settings = self.effective_config["binance_settings"]
-        self.live_trader_settings = self.effective_config["live_trader_settings"] # New settings section
+        self.live_trader_settings = self.effective_config.get("live_trader_settings", {}) # Handle missing live_trader_settings
         
         self.agent_type = self.effective_config.get("agent_type", "PPO")
 
@@ -202,6 +203,7 @@ class LiveTrader:
         kline_window_size = self.env_config["kline_window_size"]
         tick_feature_window_size = self.env_config["tick_feature_window_size"]
         kline_features = self.env_config["kline_price_features"]
+        tick_resample_interval_ms = self.env_config.get("tick_resample_interval_ms") # NEW: Get resampling interval
         
         # Fetch initial K-line data for context
         # Fetch slightly more than needed to ensure full window, using current time minus required history
@@ -226,19 +228,62 @@ class LiveTrader:
         if self.current_kline_data.empty:
             print("WARNING: Initial K-line data is empty. Environment might not initialize correctly.")
 
-        # Initialize historical ticks for observation with dummy data or zeros
-        # This will be filled with real-time ticks as they come in
-        dummy_tick_price = self.current_kline_data['Close'].iloc[-1] if not self.current_kline_data.empty else 0.0
-        dummy_tick_qty = 1.0
-        dummy_tick_ismak = False
+        # Initialize historical ticks for observation
+        # Fetch historical tick data for the initial window, applying resampling if configured
+        end_time_tick = datetime.now(timezone.utc)
+        start_time_tick = end_time_tick - timedelta(minutes=10) # Fetch recent 10 minutes of ticks
         
-        # Create a DataFrame of zeros/dummy values for the initial tick window
-        dummy_ticks = pd.DataFrame(
-            [{'Price': dummy_tick_price, 'Quantity': dummy_tick_qty, 'IsBuyerMaker': dummy_tick_ismak}] * tick_feature_window_size,
-            index=pd.to_datetime([datetime.now(timezone.utc) - timedelta(milliseconds=i) for i in range(tick_feature_window_size-1, -1, -1)])
-        )
-        self.historical_ticks_for_obs = dummy_ticks
-        
+        print(f"\nFetching initial Tick data for observation context ({symbol}, {start_time_tick} to {end_time_tick})...")
+        try:
+            self.historical_ticks_for_obs = load_tick_data_for_range(
+                symbol=symbol,
+                start_date_str=start_time_tick.strftime("%Y-%m-%d %H:%M:%S"),
+                end_date_str=end_time_tick.strftime("%Y-%m-%d %H:%M:%S"),
+                cache_dir=self.binance_settings.get("historical_cache_dir"),
+                binance_settings=self.binance_settings,
+                tick_resample_interval_ms=tick_resample_interval_ms # NEW: Pass resampling interval
+            )
+            # Ensure enough historical ticks for the window size by trimming/padding
+            if len(self.historical_ticks_for_obs) < tick_feature_window_size:
+                print(f"WARNING: Fetched tick data ({len(self.historical_ticks_for_obs)} ticks) is less than tick_feature_window_size ({tick_feature_window_size}). Padding with dummy data.")
+                # Pad with dummy data if not enough fetched historical ticks
+                if not self.historical_ticks_for_obs.empty:
+                    last_price = self.historical_ticks_for_obs['Price'].iloc[-1]
+                    last_qty = self.historical_ticks_for_obs['Quantity'].iloc[-1]
+                    last_ism = self.historical_ticks_for_obs['IsBuyerMaker'].iloc[-1]
+                else: # Fallback if no ticks fetched at all
+                    last_price = self.current_kline_data['Close'].iloc[-1] if not self.current_kline_data.empty else 0.0
+                    last_qty = 1.0
+                    last_ism = False
+
+                dummy_rows_needed = tick_feature_window_size - len(self.historical_ticks_for_obs)
+                dummy_timestamps = [end_time_tick - timedelta(milliseconds=i) for i in range(dummy_rows_needed-1, -1, -1)]
+                dummy_padding_df = pd.DataFrame(
+                    [{'Price': last_price, 'Quantity': last_qty, 'IsBuyerMaker': last_ism}] * dummy_rows_needed,
+                    index=pd.to_datetime(dummy_timestamps, utc=True)
+                )
+                self.historical_ticks_for_obs = pd.concat([dummy_padding_df, self.historical_ticks_for_obs]).sort_index().tail(tick_feature_window_size)
+            else:
+                self.historical_ticks_for_obs = self.historical_ticks_for_obs.tail(tick_feature_window_size) # Trim to window size
+            
+            # Ensure columns expected by env are present after resampling/padding
+            for col in self.env_config["tick_features_to_use"]:
+                if col not in self.historical_ticks_for_obs.columns:
+                    self.historical_ticks_for_obs[col] = 0.0 # Add missing columns as zeros
+
+        except Exception as e:
+            print(f"ERROR: Failed to load initial historical tick data: {e}. Initializing with full dummy data.")
+            traceback.print_exc()
+            dummy_price = self.current_kline_data['Close'].iloc[-1] if not self.current_kline_data.empty else 0.0
+            dummy_qty = 1.0
+            dummy_ism = False
+            dummy_ticks_fallback = pd.DataFrame(
+                [{'Price': dummy_price, 'Quantity': dummy_qty, 'IsBuyerMaker': dummy_ism}] * tick_feature_window_size,
+                index=pd.to_datetime([datetime.now(timezone.utc) - timedelta(milliseconds=i) for i in range(tick_feature_window_size-1, -1, -1)], utc=True)
+            )
+            self.historical_ticks_for_obs = dummy_ticks_fallback
+
+
         print(f"Initial environment data prepared: K-line data shape {self.current_kline_data.shape}, Tick history shape {self.historical_ticks_for_obs.shape}")
 
 
@@ -495,24 +540,10 @@ class LiveTrader:
 
                 # SimpleTradingEnv's _get_observation uses self.current_step, which is not updated in live.
                 # We need to adapt it for live trading, where the "current step" is always the latest available data.
-                # For this to work seamlessly, SimpleTradingEnv needs to internally identify its "current_step"
-                # as the last index of the `tick_df` it was provided.
-                # Or, we modify the live trading environment to simply return observation based on `tail` of dfs.
                 # The best approach is to pass a 'live_mode=True' to SimpleTradingEnv, which then uses current time,
                 # not self.current_step, for observation slicing.
                 
-                # For now, let's assume _get_observation uses the tail of the dataframes it holds.
-                # The environment's step function needs to be a no-op for internal step advancement in live.
-                # But it's usually step() that returns the obs.
-                # The current setup assumes the environment is reset only at the start or ruin.
-                # For real live trading, you'd likely feed data into the env object as it becomes available
-                # and call _get_observation or a modified step.
-
-                # Let's adjust SimpleTradingEnv to handle live mode if env_config['live_mode'] is True.
-                # For now, we'll manually call its _get_observation
-                
-                # Manually create the observation from the raw environment for consistency with VecNormalize
-                # (VecNormalize needs to be called on raw observation before being passed to model)
+                # Manually create the observation
                 raw_obs_from_env = base_env_instance._get_observation()
                 
                 if self.vec_normalize:

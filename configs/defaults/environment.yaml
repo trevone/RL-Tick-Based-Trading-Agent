@@ -26,6 +26,7 @@ environment:
   # Tick data configuration
   tick_feature_window_size: 50         # Number of historical ticks to include in obs
   tick_features_to_use: ["Price", "Quantity"] # Features to extract from tick data for observation
+  tick_resample_interval_ms: 1000      # NEW: Resample tick data to this interval in milliseconds (e.g., 100, 500, 1000 for 1 second). Set to null for no resampling.
 
   # General trading parameters
   initial_balance: 10000.0
