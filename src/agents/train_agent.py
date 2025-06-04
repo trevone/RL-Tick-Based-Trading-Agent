@@ -1,4 +1,4 @@
-# train_simple_agent.py
+# train_agent.py
 
 import os
 import json
@@ -13,99 +13,49 @@ import numpy as np
 # Suppress pandas FutureWarnings related to 'pd.concat'
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 
-from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement
+# Import Stable Baselines3 algorithms dynamically
+from stable_baselines3 import PPO, SAC, DDPG, A2C
+from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv # Keep both for flexibility
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize # Crucial for obs normalization
 
-# Import your custom environment and utilities
-from base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
-from utils import load_config, merge_configs, get_relevant_config_for_hash, generate_config_hash
-from utils import load_tick_data_for_range, load_kline_data_for_range, convert_to_native_types
-from custom_wrappers import FlattenAction
+# For RecurrentPPO (if available and chosen)
+try:
+    from sb3_contrib import RecurrentPPO
+    SB3_CONTRIB_AVAILABLE = True
+except ImportError:
+    SB3_CONTRIB_AVAILABLE = False
+    print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
-# --- Default Fallback Configurations ---
-# These are used if config.yaml is missing or specific keys are not defined there.
-# They are merged with config.yaml contents.
 
-DEFAULT_RUN_SETTINGS = {
-    "log_level": "normal", # "none", "normal", "detailed"
-    "log_dir_base": "./logs/ppo_trading/",
-    "model_name": "tick_trading_agent",
-    "total_timesteps": 1000000,
-    "eval_freq_episodes": 10, # How often to evaluate (in episodes)
-    "n_evaluation_episodes": 5, # How many episodes to run during each evaluation
-}
+# Import your custom environment and utilities from new paths
+from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG # Keep DEFAULT_ENV_CONFIG for merging with specific env config
+from src.environments.custom_wrappers import FlattenAction
+from src.data.utils import load_config, merge_configs, get_relevant_config_for_hash, generate_config_hash
+from src.data.utils import load_tick_data_for_range, load_kline_data_for_range, convert_to_native_types, DATA_CACHE_DIR
 
-# The default environment config is loaded from base_env.py
-# DEFAULT_ENV_CONFIG = DEFAULT_ENV_CONFIG # Already imported
 
-DEFAULT_PPO_PARAMS = {
-    "policy": "MlpPolicy",
-    "learning_rate": 0.0003,
-    "n_steps": 2048,
-    "batch_size": 64,
-    "n_epochs": 10,
-    "gamma": 0.99,
-    "gae_lambda": 0.95,
-    "clip_range": 0.2,
-    "ent_coef": 0.01,
-    "vf_coef": 0.5,
-    "max_grad_norm": 0.5,
-    "use_sde": True,
-    "sde_sample_freq": 4,
-    "verbose": 1, # SB3 verbosity level (0: no output, 1: info, 2: debug)
-    "total_timesteps": 1000000, # This will be popped and passed to model.learn()
-    "policy_kwargs": "dict(net_arch=dict(pi=[64, 64], vf=[64, 64]))" # Default network architecture
-}
-
-DEFAULT_BINANCE_SETTINGS = {
-    "default_symbol": "BTCUSDT",
-    "historical_interval": "1h",
-    "historical_cache_dir": "./binance_data_cache/",
-    "start_date_kline_data": "2024-01-01",
-    "end_date_kline_data": "2024-03-31",
-    "start_date_tick_data": "2024-01-01",
-    "end_date_tick_data": "2024-03-31",
-    "api_key": None, # Should be read from env var or config
-    "api_secret": None, # Should be read from env var or config
-    "testnet": True,
-    "api_request_delay_seconds": 0.05,
-}
-
-DEFAULT_EVALUATION_DATA_SETTINGS = {
-    "start_date_eval": "2024-04-01",
-    "end_date_eval": "2024-04-07",
-}
-
-# Define which config keys contribute to the run hash (for reproducibility)
-# This list must be comprehensive for any parameter that, if changed, should result in a new model.
-DEFAULT_HASH_CONFIG_KEYS = {
-    "environment": [
-        "kline_window_size", "kline_price_features", "tick_feature_window_size",
-        "tick_features_to_use", "initial_balance", "commission_pct",
-        "base_trade_amount_ratio", "min_tradeable_unit", "catastrophic_loss_threshold_pct",
-        "obs_clip_low", "obs_clip_high", "min_profit_target_low", "min_profit_target_high",
-        "reward_open_buy_position", "penalty_buy_insufficient_balance", "penalty_buy_position_already_open",
-        "reward_sell_profit_base", "reward_sell_profit_factor", "penalty_sell_loss_factor",
-        "penalty_sell_loss_base", "penalty_sell_no_position", "reward_hold_profitable_position",
-        "penalty_hold_losing_position", "penalty_hold_flat_position", "penalty_catastrophic_loss",
-        "reward_eof_sell_factor", "reward_sell_meets_target_bonus", "penalty_sell_profit_below_target"
-    ],
-    "ppo_params": [
-        "policy", "learning_rate", "n_steps", "batch_size", "n_epochs", "gamma",
-        "gae_lambda", "clip_range", "ent_coef", "vf_coef", "max_grad_norm",
-        "use_sde", "sde_sample_freq", "policy_kwargs"
-    ],
-    "binance_settings": [
-        "default_symbol", "historical_interval", # Data source details for the agent's observation space
-        # NOTE: Date ranges are typically NOT included in the hash unless changing them fundamentally
-        # changes the experiment (e.g., training on bull vs. bear market).
-        # Including them would create a new hash for every new daily batch of data, which is usually not desired.
+# --- NEW: Function to load default configurations from files ---
+def load_default_configs_for_training(config_dir="configs/defaults") -> dict:
+    """Loads default configurations from the specified directory."""
+    default_config_paths = [
+        os.path.join(config_dir, "run_settings.yaml"),
+        os.path.join(config_dir, "environment.yaml"), # This contains DEFAULT_ENV_CONFIG
+        os.path.join(config_dir, "ppo_params.yaml"),
+        os.path.join(config_dir, "sac_params.yaml"),
+        os.path.join(config_dir, "ddpg_params.yaml"),
+        os.path.join(config_dir, "a2c_params.yaml"),
+        os.path.join(config_dir, "recurrent_ppo_params.yaml"),
+        os.path.join(config_dir, "binance_settings.yaml"),
+        os.path.join(config_dir, "evaluation_data.yaml"),
+        os.path.join(config_dir, "hash_keys.yaml"),
     ]
-}
+    
+    # Use the new load_config from src.data.utils which merges multiple files
+    return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
+
 
 # --- New Function: `train_agent` ---
 def train_agent(
@@ -114,7 +64,7 @@ def train_agent(
     metric_to_return: str = "eval_reward" # Can be "eval_reward", "final_equity_pct" etc. for Optuna
 ) -> float:
     """
-    Trains the PPO agent based on the provided configuration.
+    Trains the RL agent based on the provided configuration.
     Can be called directly or by an optimizer like Optuna.
 
     Args:
@@ -132,39 +82,38 @@ def train_agent(
 
     # 1. Load and Merge Configurations
     try:
-        loaded_config = load_config("config.yaml")
-        # Start with a full merge of all default sections
-        config = {
-            "run_settings": merge_configs(DEFAULT_RUN_SETTINGS, loaded_config.get("run_settings")),
-            "environment": merge_configs(DEFAULT_ENV_CONFIG, loaded_config.get("environment")),
-            "ppo_params": merge_configs(DEFAULT_PPO_PARAMS, loaded_config.get("ppo_params")),
-            "binance_settings": merge_configs(DEFAULT_BINANCE_SETTINGS, loaded_config.get("binance_settings")),
-            "evaluation_data": merge_configs(DEFAULT_EVALUATION_DATA_SETTINGS, loaded_config.get("evaluation_data")),
-            "hash_config_keys": merge_configs(DEFAULT_HASH_CONFIG_KEYS, loaded_config.get("hash_config_keys")),
-        }
+        # Load all default configs and then merge with config.yaml
+        effective_config = load_default_configs_for_training()
+        
         if config_override:
-            # Apply config_override to the already merged config structure
-            config = merge_configs(config, config_override)
+            # Apply config_override to the already merged effective config
+            effective_config = merge_configs(effective_config, config_override)
     except Exception as e:
-        print(f"Error loading or merging configuration: {e}. Using default training config.")
-        # Fallback to all defaults if loading fails
-        config = {
-            "run_settings": DEFAULT_RUN_SETTINGS.copy(),
+        print(f"Error loading or merging configuration: {e}. Using minimal fallback.")
+        traceback.print_exc()
+        # Fallback to minimal if loading fails
+        effective_config = {
+            "run_settings": {"log_level": "normal", "log_dir_base": "./logs/training/", "model_name": "fallback_agent"},
             "environment": DEFAULT_ENV_CONFIG.copy(),
-            "ppo_params": DEFAULT_PPO_PARAMS.copy(),
-            "binance_settings": DEFAULT_BINANCE_SETTINGS.copy(),
-            "evaluation_data": DEFAULT_EVALUATION_DATA_SETTINGS.copy(),
-            "hash_config_keys": DEFAULT_HASH_CONFIG_KEYS.copy(),
+            "ppo_params": {"total_timesteps": 100000, "policy_kwargs": "{'net_arch': [64, 64]}"}, # Minimal PPO
+            "binance_settings": {"default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": DATA_CACHE_DIR,
+                                 "start_date_kline_data": "2024-01-01", "end_date_kline_data": "2024-01-03",
+                                 "start_date_tick_data": "2024-01-01 00:00:00", "end_date_tick_data": "2024-01-03 00:00:00",
+                                 "testnet": True, "api_request_delay_seconds": 0.2},
+            "evaluation_data": {"start_date_eval": "2024-01-04", "end_date_eval": "2024-01-04"},
+            "hash_config_keys": {"environment": [], "agent_params": {"PPO": []}, "binance_settings": []} # Empty hash for fallback
         }
-        if config_override: # Apply overrides even if default is used
-            config = merge_configs(config, config_override)
+        if config_override: # Apply overrides even if fallback is used
+            effective_config = merge_configs(effective_config, config_override)
 
 
-    run_settings = config["run_settings"]
-    env_config = config["environment"]
-    ppo_params = config["ppo_params"]
-    binance_settings = config["binance_settings"]
-    evaluation_data_config = config["evaluation_data"] # Get eval data settings for EvalCallback
+    run_settings = effective_config["run_settings"]
+    env_config = effective_config["environment"]
+    binance_settings = effective_config["binance_settings"]
+    evaluation_data_config = effective_config["evaluation_data"] # Get eval data settings for EvalCallback
+    
+    agent_type = effective_config.get("agent_type", "PPO") # Default to PPO if not specified
+    algo_params = effective_config.get(f"{agent_type.lower()}_params", {}) # Get algorithm-specific params
 
     # Adjust log level based on log_to_file
     current_log_level = run_settings.get("log_level", "normal")
@@ -174,37 +123,35 @@ def train_agent(
 
     # 2. Generate a unique run ID based on hashed configuration and Setup Logging Directory
     run_id = "optuna_trial" # Default for Optuna trials
+    log_dir_base = "./logs/training/" # Base for all training logs
     log_dir = "./optuna_temp_logs" # Default temp log dir for Optuna if not logging to file
     
     if log_to_file:
-        relevant_config_for_hash = get_relevant_config_for_hash(
-            config, # Pass the fully merged config as the 'full_yaml_config'
-            config, # Pass the fully merged config as the 'train_script_fallback_config'
-            env_config # Pass the final env config as 'env_script_fallback_config'
-        )
+        relevant_config_for_hash = get_relevant_config_for_hash(effective_config)
         config_hash = generate_config_hash(relevant_config_for_hash)
         run_id = f"{config_hash}_{run_settings['model_name']}"
-        log_dir = os.path.join(run_settings['log_dir_base'], run_id)
+        log_dir = os.path.join(log_dir_base, run_id)
         os.makedirs(log_dir, exist_ok=True)
         os.makedirs(os.path.join(log_dir, "best_model"), exist_ok=True) # For EvalCallback
 
-    # Override tensorboard_log if not logging to file
-    tensorboard_log_dir = run_settings.get("log_dir_base") if log_to_file else None # TensorBoard base directory
+    # TensorBoard logs go into logs/tensorboard_logs, with a subfolder for each run
+    tensorboard_log_dir = os.path.join("logs", "tensorboard_logs") if log_to_file else None
     tb_log_name = run_id if log_to_file else None # Specific run name in TensorBoard
 
     print(f"Training run ID: {run_id} (Log Level: {current_log_level})")
+    print(f"Agent Type: {agent_type}")
     if log_to_file:
         print(f"Logs and models will be saved to: {log_dir}")
         # Save the effective configuration for this run
         with open(os.path.join(log_dir, "effective_config.yaml"), "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
+            yaml.dump(effective_config, f, default_flow_style=False)
         with open(os.path.join(log_dir, "relevant_config_for_hash.json"), 'w') as f:
             json.dump(convert_to_native_types(relevant_config_for_hash), f, indent=2)
         if current_log_level != "none":
             print("Effective configuration saved to effective_config.yaml")
             if current_log_level == "detailed":
                 print("\n--- Effective Configuration for this run (detailed) ---")
-                print(json.dumps(convert_to_native_types(config), indent=2, sort_keys=True))
+                print(json.dumps(convert_to_native_types(effective_config), indent=2, sort_keys=True))
                 print("-------------------------------------------\n")
     else:
         print(f"Running Optuna trial. Logs are suppressed.")
@@ -218,7 +165,6 @@ def train_agent(
     symbol = binance_settings["default_symbol"]
     interval = binance_settings["historical_interval"]
     kline_features = env_config["kline_price_features"]
-    tick_features = env_config["tick_features_to_use"]
     cache_dir = binance_settings["historical_cache_dir"]
 
     if current_log_level != "none": print(f"\n--- Fetching and preparing K-line training data ({symbol}, {interval}, {train_start_date_kline} to {train_end_date_kline}) ---")
@@ -230,7 +176,8 @@ def train_agent(
             end_date_str=train_end_date_kline,
             interval=interval,
             price_features=kline_features,
-            cache_dir=cache_dir
+            cache_dir=cache_dir,
+            binance_settings=binance_settings # Pass binance_settings for API keys/testnet
         )
         if kline_df_train.empty:
             raise ValueError("K-line training data is empty. Cannot proceed with training.")
@@ -247,7 +194,8 @@ def train_agent(
             symbol=symbol,
             start_date_str=train_start_date_tick,
             end_date_str=train_end_date_tick,
-            cache_dir=cache_dir
+            cache_dir=cache_dir,
+            binance_settings=binance_settings # Pass binance_settings for API keys/testnet
         )
         if tick_df_train.empty:
             raise ValueError("Tick training data is empty. Cannot proceed with training.")
@@ -317,7 +265,8 @@ def train_agent(
             end_date_str=eval_end_date_kline,
             interval=interval,
             price_features=kline_features,
-            cache_dir=cache_dir
+            cache_dir=cache_dir,
+            binance_settings=binance_settings # Pass binance_settings for API keys/testnet
         )
         if kline_df_eval.empty:
             if current_log_level != "none": print("WARNING: Evaluation K-line data is empty. EvalCallback might not function correctly.")
@@ -333,7 +282,8 @@ def train_agent(
             symbol=symbol,
             start_date_str=eval_start_date_tick,
             end_date_str=eval_end_date_tick,
-            cache_dir=cache_dir
+            cache_dir=cache_dir,
+            binance_settings=binance_settings # Pass binance_settings for API keys/testnet
         )
         if tick_df_eval.empty:
             if current_log_level != "none": print("WARNING: Evaluation tick data is empty. EvalCallback might not function correctly.")
@@ -370,20 +320,26 @@ def train_agent(
             # eval_freq: The number of steps between evaluations.
             # In SimpleTradingEnv, each step is a tick. So, we multiply by the max steps per episode (end_step)
             # to get evaluation frequency in terms of full episodes.
-            eval_freq_steps = run_settings.get("eval_freq_episodes") * (tick_df_train.shape[0] - env_config["tick_feature_window_size"])
+            # Approx steps per episode from tick_df_train:
+            approx_steps_per_episode = tick_df_train.shape[0] - env_config["tick_feature_window_size"]
+            if approx_steps_per_episode <= 0:
+                print("WARNING: Not enough training data for even one episode. EvalCallback might fail.")
+                eval_freq_steps = 1 # Fallback to minimal
+            else:
+                eval_freq_steps = run_settings.get("eval_freq_episodes") * approx_steps_per_episode
             
             eval_callback = EvalCallback(
                 eval_env_for_callback, # Pass the VecNormalize wrapped eval env
                 best_model_save_path=os.path.join(log_dir, "best_model") if log_to_file else None,
                 log_path=log_dir if log_to_file else None,
-                eval_freq=max(1, eval_freq_steps), # Ensure at least 1 step
+                eval_freq=max(1, int(eval_freq_steps)), # Ensure at least 1 step and is int
                 n_eval_episodes=run_settings.get("n_evaluation_episodes"),
                 deterministic=True,
                 render=False,
                 callback_after_eval=stop_train_callback,
                 verbose=1 if current_log_level in ["normal", "detailed"] else 0
             )
-            if current_log_level != "none": print(f"\nEvalCallback set up to run every {run_settings.get('eval_freq_episodes')} episodes (~{eval_freq_steps} steps).")
+            if current_log_level != "none": print(f"\nEvalCallback set up to run every {run_settings.get('eval_freq_episodes')} episodes (~{int(eval_freq_steps)} steps).")
         except Exception as e:
             print(f"WARNING: Failed to set up EvalCallback: {e}. Training will proceed without it.")
             traceback.print_exc()
@@ -393,39 +349,57 @@ def train_agent(
     else:
         print("Not enough valid data for evaluation environment. EvalCallback will be skipped.")
 
-    # 6. Create PPO Agent
-    # Extract total_timesteps before passing ppo_params to PPO constructor
-    # Ensure it's a copy so the original ppo_params (from config) is not modified for hashing
-    ppo_params_for_init = ppo_params.copy()
-    total_timesteps_for_learn = ppo_params_for_init.pop("total_timesteps")
+    # 6. Create Agent (PPO, SAC, DDPG, A2C, RecurrentPPO)
+    model = None
+    # Extract total_timesteps before passing algo_params to constructor
+    algo_params_for_init = algo_params.copy()
+    total_timesteps_for_learn = algo_params_for_init.pop("total_timesteps", 100000) # Default if missing
     
     # Handle policy_kwargs if it's a string (e.g., from YAML)
-    if "policy_kwargs" in ppo_params_for_init and isinstance(ppo_params_for_init["policy_kwargs"], str):
+    if "policy_kwargs" in algo_params_for_init and isinstance(algo_params_for_init["policy_kwargs"], str):
         try:
-            ppo_params_for_init["policy_kwargs"] = eval(ppo_params_for_init["policy_kwargs"])
+            algo_params_for_init["policy_kwargs"] = eval(algo_params_for_init["policy_kwargs"])
         except Exception as e:
-            if current_log_level != "none": print(f"WARNING: Could not parse policy_kwargs string '{ppo_params_for_init['policy_kwargs']}': {e}. Using default.")
-            if "policy_kwargs" in ppo_params_for_init: del ppo_params_for_init["policy_kwargs"] # Remove potentially invalid policy_kwargs
-            # Fallback to a safe default if needed, or let SB3 use its default
+            if current_log_level != "none": print(f"WARNING: Could not parse policy_kwargs string '{algo_params_for_init['policy_kwargs']}': {e}. Using default.")
+            if "policy_kwargs" in algo_params_for_init: del algo_params_for_init["policy_kwargs"] # Remove potentially invalid policy_kwargs
 
     try:
-        model = PPO(
-            "MlpPolicy", # policy_type
+        model_class = None
+        if agent_type == "PPO":
+            model_class = PPO
+        elif agent_type == "SAC":
+            model_class = SAC
+        elif agent_type == "DDPG":
+            model_class = DDPG
+        elif agent_type == "A2C":
+            model_class = A2C
+        elif agent_type == "RecurrentPPO":
+            if SB3_CONTRIB_AVAILABLE:
+                model_class = RecurrentPPO
+                # RecurrentPPO requires LstmPolicy. Ensure it's not overridden by policy_kwargs.
+                algo_params_for_init["policy"] = "MlpLstmPolicy" # Hardcode for RecurrentPPO
+            else:
+                raise ImportError("RecurrentPPO requested but sb3_contrib is not installed.")
+        else:
+            raise ValueError(f"Unknown agent type: {agent_type}. Supported: PPO, SAC, DDPG, A2C, RecurrentPPO.")
+
+        model = model_class(
+            "MlpPolicy" if agent_type != "RecurrentPPO" else "MlpLstmPolicy", # Policy type
             env, # vectorized environment
-            verbose=ppo_params_for_init.pop("verbose", 1), # Pop verbose to avoid passing twice
+            verbose=1 if current_log_level in ["normal", "detailed"] else 0,
             tensorboard_log=tensorboard_log_dir,
-            **ppo_params_for_init # Unpack remaining PPO parameters
+            **algo_params_for_init # Unpack remaining algorithm parameters
         )
-        if current_log_level != "none": print(f"\nPPO Agent created with parameters:\n{json.dumps(convert_to_native_types(ppo_params_for_init), indent=2)}")
+        if current_log_level != "none": print(f"\n{agent_type} Agent created with parameters:\n{json.dumps(convert_to_native_types(algo_params_for_init), indent=2)}")
         if current_log_level != "none": print(f"Total timesteps to learn: {total_timesteps_for_learn}")
 
     except Exception as e:
-        print(f"ERROR: Failed to create PPO agent: {e}")
+        print(f"ERROR: Failed to create {agent_type} agent: {e}")
         traceback.print_exc()
         return -np.inf # Return negative infinity for failed trials
 
     # 7. Train the Agent
-    if current_log_level != "none": print("\n--- Starting PPO Training ---")
+    if current_log_level != "none": print(f"\n--- Starting {agent_type} Training ---")
     final_return_metric = -np.inf # Initialize with a low value for failed trials
     
     callbacks_list = []
@@ -491,6 +465,6 @@ def train_agent(
 
 # Ensure that the main execution block is guarded so Optuna can import `train_agent` directly.
 if __name__ == "__main__":
-    # When running train_simple_agent.py directly, log to file
+    # When running train_agent.py directly, log to file
     final_reward = train_agent(log_to_file=True)
-    print(f"\nFinal Training Metric: {final_reward:.2f}")
+    print(f"\n--- Training Script Finished (Final Metric: {final_reward:.2f}) ---")

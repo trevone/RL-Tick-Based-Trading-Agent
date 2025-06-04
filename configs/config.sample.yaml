@@ -31,6 +31,10 @@ run_settings:
   # Options: "none" (minimal), "normal" (standard progress), "detailed" (verbose debugging).
   log_level: "normal"
 
+  # Device to use for training (e.g., "auto", "cpu", "cuda", "cuda:0").
+  # "auto" will use GPU if available, else CPU.
+  device: "auto" # NEW SETTING FOR GPU TRAINING
+
   # --- Live Trading Specific Sub-settings ---
   # Directory where live trading logs, performance metrics, and trade history will be saved.
   live_log_dir: "./logs/live_trading/"

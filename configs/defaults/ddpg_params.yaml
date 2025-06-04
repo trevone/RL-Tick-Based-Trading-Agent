@@ -1,0 +1,14 @@
+# configs/defaults/ddpg_params.yaml
+# DDPG (Deep Deterministic Policy Gradient) specific hyperparameters
+ddpg_params:
+  total_timesteps: 500000             # Total number of samples to train on
+  learning_rate: 0.0001               # Learning rate for actor and critic
+  buffer_size: 100000                 # Size of the replay buffer (max number of transitions)
+  learning_starts: 10000              # Number of steps before learning starts
+  batch_size: 128                     # Minibatch size
+  tau: 0.005                          # Soft update coefficient (for the target network)
+  gamma: 0.99                         # Discount factor
+  train_freq: "[1, 'episode']"        # Update the agent every `train_freq` steps. (int or tuple as string)
+  gradient_steps: -1                  # How many gradient steps to do after each rollout. (-1 for as many as possible)
+  action_noise: null                  # Action noise object for exploration (e.g., "NormalActionNoise(mean=np.zeros(env.action_space.shape[-1]), sigma=0.1 * np.ones(env.action_space.shape[-1]))")
+  policy_kwargs: "{'net_arch': [400, 300]}" # Network architecture for the policy and Q-functions (as string)

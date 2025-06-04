@@ -1,0 +1,18 @@
+# configs/defaults/ppo_params.yaml
+# PPO (Proximal Policy Optimization) specific hyperparameters
+ppo_params:
+  total_timesteps: 10000000           # Total number of samples to train on
+  learning_rate: 0.0003               # Learning rate for the Adam optimizer
+  n_steps: 2048                       # The number of steps to run for each environment per update
+  batch_size: 64                      # Minibatch size
+  n_epochs: 10                        # Number of epoch when optimizing the surrogate loss
+  gamma: 0.99                         # Discount factor
+  gae_lambda: 0.95                    # Factor for trade-off of bias vs variance for GAE
+  clip_range: 0.2                     # Clipping parameter for PPO
+  ent_coef: 0.01                      # Entropy coefficient for the loss calculation
+  vf_coef: 0.5                        # Value function coefficient for the loss calculation
+  max_grad_norm: 0.5                  # The maximum value for the gradient clipping
+  target_kl: 0.02                     # The maximum KL divergence between old and new policy
+  use_sde: False                      # Whether to use generalized State Dependent Exploration (SDE)
+  sde_sample_freq: -1                 # Sample a new SDE noise every n steps (and for the initial exploration)
+  policy_kwargs: "{'net_arch': [64, 64]}" # Network architecture for the policy and value function (as string to be eval'd)

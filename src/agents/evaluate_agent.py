@@ -1,4 +1,5 @@
 # evaluate_agent.py
+import pytest # Import pytest for the fixture if not already imported by user
 import os
 import pandas as pd
 import numpy as np
@@ -10,73 +11,60 @@ from datetime import datetime, timezone
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-# Import Stable Baselines3 PPO (assuming you trained with PPO)
-from stable_baselines3 import PPO
-# If you trained with RecurrentPPO, uncomment the line below and comment out PPO:
-# from sb3_contrib import RecurrentPPO
+# Import Stable Baselines3 algorithms dynamically
+from stable_baselines3 import PPO, SAC, DDPG, A2C
+# For RecurrentPPO (if available and chosen)
+try:
+    from sb3_contrib import RecurrentPPO
+    SB3_CONTRIB_AVAILABLE = True
+except ImportError:
+    SB3_CONTRIB_AVAILABLE = False
+    print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
 from stable_baselines3.common.monitor import Monitor # For wrapping the environment to get episode info
 from stable_baselines3.common.vec_env import VecNormalize # Import VecNormalize for observation standardization
 
-# Import custom modules from the project.
-try:
-    from base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
-    # Import relevant default configs for merging and hashing consistency
-    from train_simple_agent import ( # Use the new train_simple_agent's defaults
-        DEFAULT_RUN_SETTINGS as TRAIN_SCRIPT_DEFAULT_RUN_SETTINGS,
-        DEFAULT_ENV_CONFIG as TRAIN_SCRIPT_DEFAULT_ENV_CONFIG,
-        DEFAULT_PPO_PARAMS as TRAIN_SCRIPT_DEFAULT_PPO_PARAMS,
-        DEFAULT_BINANCE_SETTINGS as TRAIN_SCRIPT_DEFAULT_BINANCE_SETTINGS,
-        DEFAULT_EVALUATION_DATA_SETTINGS as TRAIN_SCRIPT_DEFAULT_EVALUATION_DATA_SETTINGS,
-        DEFAULT_HASH_CONFIG_KEYS as TRAIN_SCRIPT_DEFAULT_HASH_CONFIG_KEYS
-    )
-    from utils import (
-        load_config,
-        merge_configs,
-        convert_to_native_types,
-        load_tick_data_for_range, # Use your updated data loading functions
-        load_kline_data_for_range, # Use your updated data loading functions
-        resolve_model_path # For finding the trained model to evaluate.
-    )
-    from custom_wrappers import FlattenAction # Import your custom wrapper
-except ImportError as e:
-    print(f"CRITICAL ERROR: Failed to import necessary modules. Ensure base_env.py, train_simple_agent.py, "
-          f"utils.py, and custom_wrappers.py are accessible in the same directory or via PYTHONPATH. Error: {e}")
-    import sys
-    sys.exit(1)
+# Import custom modules from the project's new structure
+from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
+from src.environments.custom_wrappers import FlattenAction
+from src.data.utils import (
+    load_config,
+    merge_configs,
+    convert_to_native_types,
+    load_tick_data_for_range,
+    load_kline_data_for_range,
+    resolve_model_path,
+    DATA_CACHE_DIR # For passing to load functions
+)
 
-# Default configuration for the evaluation script, aligned with your project's structure.
-# This will be merged with config.yaml's 'evaluation_data' and other relevant sections.
-DEFAULT_EVAL_CONFIG = {
-    "run_settings": {
-        "log_dir_base": "./logs/ppo_trading/", # Base directory where trained models are saved
-        "model_name": "tick_trading_agent", # Model name used in training to derive path
-        "log_level": "normal", # "none", "normal", "detailed" for eval script's verbosity
-        "eval_log_dir": "./logs/evaluation_runs/", # Directory for evaluation specific logs/charts
-        "model_path": None, # Explicit path to the model .zip file (optional). If None, uses resolve_model_path.
-        "alt_model_path": None, # Alternative explicit model path (e.g., final model if best is primary).
-    },
-    "evaluation_data": { # Specific dates for evaluation data (will be merged with config.yaml)
-        "start_date_kline_eval": "2024-04-01",
-        "end_date_kline_eval": "2024-04-07",
-        "start_date_tick_eval": "2024-04-01",
-        "end_date_tick_eval": "2024-04-07",
-    },
-    "n_evaluation_episodes": 3,         # Default number of episodes to run for evaluation.
-    "deterministic_prediction": True,   # Whether the agent should use deterministic actions (True for eval).
-    "print_step_info_freq": 50,         # Frequency to print step information if log_level is "normal".
-    "binance_settings": {               # Settings for Binance data.
-        "api_key": None, # Will default to env var if None
-        "api_secret": None, # Will default to env var if None
-        "testnet": True,               # Default to Testnet for safety, change in config.yaml for mainnet
-        "historical_cache_dir": "./binance_data_cache/", # Shared cache dir
-        "default_symbol": "BTCUSDT",
-        "historical_interval": "1h",
-        "api_request_delay_seconds": 0.2,
-        "cache_file_type": "parquet"
-    },
-    "environment": DEFAULT_ENV_CONFIG # Environment config, will be merged with config.yaml overrides
-}
+
+# --- NEW: Function to load default configurations from files ---
+def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
+    """Loads default configurations from the specified directory for evaluation."""
+    default_config_paths = [
+        os.path.join(config_dir, "run_settings.yaml"),
+        os.path.join(config_dir, "environment.yaml"),
+        os.path.join(config_dir, "binance_settings.yaml"),
+        os.path.join(config_dir, "evaluation_data.yaml"),
+        os.path.join(config_dir, "hash_keys.yaml"), # Needed for resolve_model_path
+        os.path.join(config_dir, "ppo_params.yaml"), # Include all algo params for hashing to resolve model
+        os.path.join(config_dir, "sac_params.yaml"),
+        os.path.join(config_dir, "ddpg_params.yaml"),
+        os.path.join(config_dir, "a2c_params.yaml"),
+        os.path.join(config_dir, "recurrent_ppo_params.yaml"),
+    ]
+    
+    # Use the new load_config from src.data.utils which merges multiple files
+    return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
+
+
+# --- Fixture to disable plotting in tests (add to your test_evaluation.py not src/agents/evaluate_agent.py) ---
+# This part belongs in tests/agents/test_evaluation.py, but I'm including it here as a reminder.
+# @pytest.fixture(autouse=True)
+# def disable_plotting_in_tests(monkeypatch):
+#     monkeypatch.setattr(plt, 'show', lambda: None)
+#     monkeypatch.setattr(plt, 'savefig', lambda *args, **kwargs: None)
+
 
 def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: str, log_dir: str, title: str = "Agent Performance"):
     """
@@ -187,50 +175,35 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
 def main():
     """
     Main function to evaluate a trained agent on historical Binance data.
-    Handles configuration loading, data preparation (Binance-only), model loading,
+    Handles configuration loading, data preparation, model loading,
     running evaluation episodes, and reporting/saving results.
     """
     # --- 1. Load and Merge Configurations ---
-    yaml_config_full = load_config("config.yaml") # Load from current directory
-
-    # Start with default eval config, then merge with config.yaml
-    # Use training script's defaults for run settings, ppo params, binance settings etc.,
-    # to ensure consistency in parsing `resolve_model_path`.
-    effective_eval_config = {
-        "run_settings": merge_configs(DEFAULT_EVAL_CONFIG["run_settings"], yaml_config_full.get("run_settings")),
-        "evaluation_data": merge_configs(DEFAULT_EVAL_CONFIG["evaluation_data"], yaml_config_full.get("evaluation_data")),
-        "binance_settings": merge_configs(DEFAULT_EVAL_CONFIG["binance_settings"], yaml_config_full.get("binance_settings")),
-        "environment": merge_configs(DEFAULT_EVAL_CONFIG["environment"], yaml_config_full.get("environment")),
-    }
+    effective_eval_config = load_default_configs_for_evaluation()
     
     current_log_level = effective_eval_config.get("run_settings", {}).get("log_level", "normal")
-    
-    # Apply environment overrides specified in the evaluation_data section of config.yaml
-    evaluation_section_from_yaml = yaml_config_full.get("evaluation_data", {})
-    if "environment_overrides" in evaluation_section_from_yaml and evaluation_section_from_yaml["environment_overrides"]:
-         effective_eval_config["environment"] = merge_configs(effective_eval_config["environment"], evaluation_section_from_yaml["environment_overrides"])
+    agent_type = effective_eval_config.get("agent_type", "PPO") # Default to PPO
 
-    effective_eval_config["environment"]["log_level"] = "none" # Always suppress env logging during eval
-    effective_eval_config["environment"]["custom_print_render"] = "none"
+    # DEBUG PRINT
+    if current_log_level == "detailed":
+        print(f"DEBUG: effective_eval_config at start of main:\n{json.dumps(convert_to_native_types(effective_eval_config), indent=2)}")
+
+    # Apply environment overrides specified in the evaluation_data section of config.yaml
+    # This is already handled by load_config if environment_overrides are top-level in config.yaml
+    # or if evaluation_data section is merged correctly.
+    # Ensure explicit env config for env instance uses the correct source
+    eval_env_config_for_instance = effective_eval_config["environment"]
+
+    eval_env_config_for_instance["log_level"] = "none" # Always suppress env logging during eval
+    eval_env_config_for_instance["custom_print_render"] = "none"
 
     if current_log_level == "detailed":
         print(f"Final effective evaluation config:\n{json.dumps(convert_to_native_types(effective_eval_config), indent=2)}")
 
     # --- 2. Resolve Model Path ---
-    # `resolve_model_path` needs the full training config defaults for hashing consistency.
-    # We pass the loaded config to it, and the training script's defaults as fallbacks.
+    # `resolve_model_path` needs the full effective config for hashing consistency.
     model_load_path, alt_model_path_info = resolve_model_path(
-        eval_specific_config=effective_eval_config["run_settings"],
-        full_yaml_config=yaml_config_full, # Use the directly loaded YAML content
-        train_script_fallback_config={ # Construct a dict mirroring train_simple_agent's logic
-            "run_settings": TRAIN_SCRIPT_DEFAULT_RUN_SETTINGS,
-            "environment": TRAIN_SCRIPT_DEFAULT_ENV_CONFIG,
-            "ppo_params": TRAIN_SCRIPT_DEFAULT_PPO_PARAMS,
-            "binance_settings": TRAIN_SCRIPT_DEFAULT_BINANCE_SETTINGS,
-            "evaluation_data": TRAIN_SCRIPT_DEFAULT_EVALUATION_DATA_SETTINGS,
-            "hash_config_keys": TRAIN_SCRIPT_DEFAULT_HASH_CONFIG_KEYS
-        },
-        env_script_fallback_config=DEFAULT_ENV_CONFIG, # Used for environment hashing
+        effective_config=effective_eval_config,
         log_level=current_log_level
     )
 
@@ -246,6 +219,7 @@ def main():
     print(f"--- Evaluating Model: {model_load_path} (Log Level: {current_log_level}) ---")
     print(f"Evaluation run ID: {eval_run_id}")
     print(f"Evaluation logs and charts will be saved to: {eval_log_dir}")
+    print(f"Agent Type: {agent_type}")
 
     # Save the effective configuration for this evaluation run
     with open(os.path.join(eval_log_dir, "effective_eval_config.json"), "w") as f:
@@ -268,20 +242,17 @@ def main():
             interval=eval_binance_settings["historical_interval"],
             start_date_str=eval_data_settings["start_date_kline_eval"],
             end_date_str=eval_data_settings["end_date_kline_eval"],
-            cache_dir=eval_binance_settings["historical_cache_dir"],
-            price_features=kline_features_for_data_fetch, # Use env's features for TA calculation
-            # Pass API keys explicitly if they are not None in effective_eval_config
-            # load_kline_data_for_range and load_tick_data_for_range do not accept api_key/secret directly.
-            # They use the values from the environment variables or the Client() constructor defaults in utils.py.
-            # This is okay as long as utils.py handles it.
+            cache_dir=DATA_CACHE_DIR, # Use DATA_CACHE_DIR
+            price_features=kline_features_for_data_fetch,
+            binance_settings=eval_binance_settings # Pass binance settings for API keys/testnet
         )
         if eval_kline_df.empty:
-            raise ValueError("K-line evaluation data not loaded or is empty.")
+            raise ValueError("K-line evaluation data is empty. Cannot proceed with evaluation.")
         print(f"K-line eval data loaded: {eval_kline_df.shape} from {eval_kline_df.index.min()} to {eval_kline_df.index.max()}")
     except Exception as e:
         print(f"ERROR: K-line evaluation data not loaded. Details: {e}")
         traceback.print_exc()
-        exit(1)
+        exit(1) # This exit is what caused the FAILED test
 
     print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
     eval_tick_df = pd.DataFrame() # Initialize
@@ -290,28 +261,29 @@ def main():
             symbol=eval_binance_settings["default_symbol"],
             start_date_str=eval_data_settings["start_date_tick_eval"],
             end_date_str=eval_data_settings["end_date_tick_eval"],
-            cache_dir=eval_binance_settings["historical_cache_dir"],
+            cache_dir=DATA_CACHE_DIR, # Use DATA_CACHE_DIR
+            binance_settings=eval_binance_settings # Pass binance settings for API keys/testnet
         )
         if eval_tick_df.empty:
-            raise ValueError("Tick evaluation data not loaded or is empty.")
+            raise ValueError("Tick evaluation data is empty. Cannot proceed with evaluation.")
         print(f"Tick eval data loaded: {eval_tick_df.shape} from {eval_tick_df.index.min()} to {eval_tick_df.index.max()}")
     except Exception as e:
         print(f"ERROR: Tick evaluation data not loaded. Details: {e}")
         traceback_str = traceback.format_exc()
         print(traceback_str)
-        exit(1)
+        exit(1) # This exit is also what caused the FAILED test
 
     # --- 4. Create Evaluation Environment and Load Model ---
     eval_env = None
     try:
         # Create the base environment instance using the effective environment config
-        base_eval_env = SimpleTradingEnv(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=effective_eval_config["environment"])
+        base_eval_env = SimpleTradingEnv(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=eval_env_config_for_instance)
         # Apply the FlattenAction wrapper
         wrapped_eval_env = FlattenAction(base_eval_env)
         
         # Load VecNormalize statistics from the training run's log directory
-        # The model's path is something like logs/ppo_trading/<HASH_MODELNAME>/best_model/best_model.zip
-        # So the VecNormalize stats are in logs/ppo_trading/<HASH_MODELNAME>/vec_normalize.pkl
+        # The model's path is something like logs/training/<HASH_MODELNAME>/best_model/best_model.zip
+        # So the VecNormalize stats are in logs/training/<HASH_MODELNAME>/vec_normalize.pkl
         model_training_run_dir = os.path.dirname(os.path.dirname(model_load_path)) # Go up two levels
         vec_normalize_stats_path = os.path.join(model_training_run_dir, "vec_normalize.pkl")
         
@@ -327,10 +299,8 @@ def main():
             if current_log_level != "none": print(f"VecNormalize statistics loaded and applied from: {vec_normalize_stats_path}")
         else:
             print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Evaluation observations will NOT be normalized consistently with training. This can lead to poor performance.")
-            print("Consider ensuring `vec_normalize.pkl` is saved by `train_simple_agent.py` in the model's training log directory.")
+            print("Consider ensuring `vec_normalize.pkl` is saved by `train_agent.py` in the model's training log directory.")
             # If stats are not found, the agent will receive unnormalized observations, likely leading to poor performance.
-            # You might want to exit here if consistent normalization is critical.
-            # For now, it proceeds but logs a strong warning.
 
         # Monitor should wrap the final environment passed to the model (VecNormalize in this case)
         eval_env = Monitor(eval_env_normalized, filename=os.path.join(eval_log_dir, "eval_monitor.csv"))
@@ -340,13 +310,29 @@ def main():
         print(f"Error creating evaluation environment: {e}")
         traceback_str = traceback.format_exc()
         print(traceback_str)
-        if eval_env: eval_env.close()
         exit(1)
 
     try:
-        # Load the trained model (PPO expects the wrapped env).
-        # When loading a model trained with VecNormalize, you generally pass the VecNormalize env.
-        model = PPO.load(model_load_path, env=eval_env)
+        # Dynamically load the correct model class
+        model_class = None
+        if agent_type == "PPO":
+            model_class = PPO
+        elif agent_type == "SAC":
+            model_class = SAC
+        elif agent_type == "DDPG":
+            model_class = DDPG
+        elif agent_type == "A2C":
+            model_class = A2C
+        elif agent_type == "RecurrentPPO":
+            if SB3_CONTRIB_AVAILABLE:
+                model_class = RecurrentPPO
+            else:
+                raise ImportError("RecurrentPPO model type requested but sb3_contrib is not installed.")
+        else:
+            raise ValueError(f"Unknown agent type '{agent_type}'. Supported: PPO, SAC, DDPG, A2C, RecurrentPPO.")
+
+        # Load the trained model (pass the VecNormalize env).
+        model = model_class.load(model_load_path, env=eval_env)
         print("Model loaded successfully for evaluation.")
     except Exception as e:
         print(f"Error loading agent model from '{model_load_path}': {e}")
