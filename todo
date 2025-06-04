@@ -1,0 +1,3 @@
+reparse tick data to fill in the gaps
+change algos, add SAC, DDPG, A2C, RecurrentPPO
+change directy structure, add pytest

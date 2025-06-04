@@ -10,8 +10,8 @@ from datetime import datetime, timedelta, timezone
 import time # Import time module for sleep (still useful for general delays)
 
 # Import the necessary functions from your updated utils.py and check_tick_cache.py
-from utils import fetch_and_cache_tick_data, get_data_path_for_day, fetch_and_cache_kline_data
-from check_tick_cache import validate_daily_data
+from src.data.utils import fetch_and_cache_tick_data, get_data_path_for_day, fetch_and_cache_kline_data, DATA_CACHE_DIR
+from src.data.check_tick_cache import validate_daily_data
 
 def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str):
     """
@@ -142,7 +142,7 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
                     interval=interval,
                     start_date_str=start_datetime_str_for_api,
                     end_date_str=end_datetime_str_for_api,
-                    cache_dir="./binance_data_cache/", # Use the global DATA_CACHE_DIR
+                    cache_dir=DATA_CACHE_DIR, # Use DATA_CACHE_DIR from src.data.utils
                     price_features_to_add=price_features_to_add
                 )
                 
@@ -153,7 +153,7 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
                     current_date += timedelta(days=1)
                     continue
             except Exception as e:
-                print(f"  Error downloading K-line data for {symbol} on {date_str_for_file}: {e}")
+                print(f"  Error downloading K-line data for {symbol} on {date_date_for_file}: {e}")
                 current_date += timedelta(days=1)
                 continue
 

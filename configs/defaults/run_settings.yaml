@@ -1,0 +1,12 @@
+# configs/defaults/run_settings.yaml
+run_settings:
+  log_level: "normal"                 # Level of console logging: "none", "normal", "detailed"
+  log_dir_base: "logs/"               # Base directory for all training logs (relative to project root)
+  eval_log_dir: "logs/evaluation/"    # Base directory for evaluation run logs (relative to project root)
+  model_name: "tick_trading_agent"    # Base name for saved models and log directories
+  model_path: null                    # Explicit path to a .zip model file to load for evaluation/live trading (e.g., "logs/training/your_hash_model_name/best_model/best_model.zip"). If null, path is reconstructed by hash.
+  alt_model_path: null                # An alternative model path, useful for comparison or secondary models.
+  deterministic_prediction: True      # Use deterministic actions during evaluation and live trading
+  eval_freq_episodes: 10              # Number of training episodes between evaluations (for EvalCallback)
+  n_evaluation_episodes: 3            # Number of episodes to run during each evaluation callback or standalone eval
+  print_step_info_freq: 50            # Print step info every X steps during evaluation (when log_level is 'normal')

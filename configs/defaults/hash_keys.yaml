@@ -1,0 +1,118 @@
+# configs/defaults/hash_keys.yaml
+hash_config_keys:
+  # Keys from the 'environment' section to include in the run hash.
+  # Changing any of these parameters will result in a new hash and a new log directory.
+  environment:
+    - kline_window_size
+    - kline_price_features
+    - tick_feature_window_size
+    - tick_features_to_use
+    - initial_balance
+    - commission_pct
+    - base_trade_amount_ratio
+    - min_tradeable_unit
+    - catastrophic_loss_threshold_pct
+    - obs_clip_low
+    - obs_clip_high
+    - min_profit_target_low
+    - min_profit_target_high
+    - reward_open_buy_position
+    - penalty_buy_insufficient_balance
+    - penalty_buy_position_already_open
+    - reward_sell_profit_base
+    - reward_sell_profit_factor
+    - penalty_sell_loss_factor
+    - penalty_sell_loss_base
+    - penalty_sell_no_position
+    - reward_hold_profitable_position
+    - penalty_hold_losing_position
+    - penalty_hold_flat_position
+    - penalty_catastrophic_loss
+    - reward_eof_sell_factor
+    - reward_sell_meets_target_bonus
+    - penalty_sell_profit_below_target
+
+  # Keys from the agent's specific parameter section (e.g., ppo_params, sac_params)
+  # The specific algorithm's keys used for hashing will be selected based on 'agent_type'.
+  agent_params:
+    PPO:
+      - total_timesteps
+      - learning_rate
+      - n_steps
+      - batch_size
+      - n_epochs
+      - gamma
+      - gae_lambda
+      - clip_range
+      - ent_coef
+      - vf_coef
+      - max_grad_norm
+      - target_kl
+      - use_sde
+      - sde_sample_freq
+      - policy_kwargs # Hash policy_kwargs as a string or a dict after eval()
+
+    SAC:
+      - total_timesteps
+      - learning_rate
+      - buffer_size
+      - learning_starts
+      - batch_size
+      - tau
+      - gamma
+      - train_freq
+      - gradient_steps
+      - ent_coef
+      - use_sde
+      - sde_sample_freq
+      - policy_kwargs
+
+    DDPG:
+      - total_timesteps
+      - learning_rate
+      - buffer_size
+      - learning_starts
+      - batch_size
+      - tau
+      - gamma
+      - train_freq
+      - gradient_steps
+      - action_noise
+      - policy_kwargs
+
+    A2C:
+      - total_timesteps
+      - learning_rate
+      - n_steps
+      - gamma
+      - gae_lambda
+      - ent_coef
+      - vf_coef
+      - max_grad_norm
+      - use_sde
+      - policy_kwargs
+
+    RecurrentPPO:
+      - total_timesteps
+      - learning_rate
+      - n_steps
+      - batch_size
+      - n_epochs
+      - gamma
+      - gae_lambda
+      - clip_range
+      - ent_coef
+      - vf_coef
+      - max_grad_norm
+      - use_sde
+      - policy_kwargs # This will contain LSTM specific params for RecurrentPPO
+
+  # Keys from the 'binance_settings' section to include in the run hash.
+  binance_settings:
+    - default_symbol
+    - historical_interval
+    - start_date_kline_data
+    - end_date_kline_data
+    - start_date_tick_data
+    - end_date_tick_data
+    - testnet

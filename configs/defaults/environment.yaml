@@ -1,0 +1,62 @@
+# configs/defaults/environment.yaml
+environment:
+  # K-line data configuration (e.g., for 1H candles)
+  kline_window_size: 20                # Number of historical k-lines (e.g., 1H candles) to include in obs
+  kline_price_features:                # Base features from k-lines and calculated TAs
+    - "Open"
+    - "High"
+    - "Low"
+    - "Close"
+    - "Volume"
+    - "SMA_10"
+    - "RSI_7"
+    - "RSI_14"
+    - "ATR"
+    - "MACD"
+    - "ADX"
+    - "STOCH_K"
+    - "BBANDS_Upper"
+    - "AD"
+    - "OBV"
+    - "CDLDOJI"
+    - "CDLHAMMER"
+    - "CDLENGULFING"
+    - "CDLMORNINGSTAR"
+
+  # Tick data configuration
+  tick_feature_window_size: 50         # Number of historical ticks to include in obs
+  tick_features_to_use: ["Price", "Quantity"] # Features to extract from tick data for observation
+
+  # General trading parameters
+  initial_balance: 10000.0
+  commission_pct: 0.001                # Commission per trade (0.1%)
+  base_trade_amount_ratio: 0.1         # Proportion of initial_balance to commit to a trade
+  min_tradeable_unit: 1e-6             # Smallest unit of asset that can be traded (e.g., BTC)
+  catastrophic_loss_threshold_pct: 0.3 # Episode terminates if equity drops below this % of initial
+  obs_clip_low: -5.0                   # Clip observation values to prevent extreme outliers
+  obs_clip_high: 5.0                   # Clip observation values
+
+  # Continuous Profit Target action parameter ranges (for the Box action space)
+  min_profit_target_low: 0.001         # e.g., 0.1% of entry price
+  min_profit_target_high: 0.05         # e.g., 5% of entry price
+
+  # Reward and Penalty settings (Adjust carefully for tick-level actions)
+  reward_open_buy_position: 0.001
+  penalty_buy_insufficient_balance: -0.1
+  penalty_buy_position_already_open: -0.05
+  reward_sell_profit_base: 0.1
+  reward_sell_profit_factor: 10.0      # Multiplier for PnL in reward calculation
+  penalty_sell_loss_factor: 10.0       # Multiplier for PnL in penalty calculation
+  penalty_sell_loss_base: -0.01
+  penalty_sell_no_position: -0.1
+  reward_hold_profitable_position: 0.0001
+  penalty_hold_losing_position: -0.0005
+  penalty_hold_flat_position: -0.0001
+  penalty_catastrophic_loss: -100.0    # Large penalty for hitting catastrophic loss threshold
+  reward_eof_sell_factor: 5.0          # Bonus for positive PnL if position is closed at end of episode
+
+  reward_sell_meets_target_bonus: 0.5  # Bonus if a sell action meets or exceeds the desired profit target
+  penalty_sell_profit_below_target: -0.05 # Penalty if profit is made but below the target
+
+  custom_print_render: "none"          # "none", "human" (for custom prints during render/step)
+  log_level: "normal"                  # Log level for environment's internal prints: "none", "normal", "detailed"

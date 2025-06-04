@@ -8,7 +8,7 @@ import json
 import hashlib
 from datetime import datetime, timezone, timedelta
 import time
-from typing import Union
+from typing import Union, List, Dict
 import re
 
 try:
@@ -31,11 +31,13 @@ except ImportError:
 
 # --- NEW: Data Cache Directory ---
 # Consistent with check_tick_cache.py
-DATA_CACHE_DIR = "./binance_data_cache/"
+DATA_CACHE_DIR = "data_cache/" # Updated path
 
-def load_config(config_path="config.yaml"):
+def _load_single_yaml_config(config_path: str) -> Dict:
+    """Loads a single YAML configuration file."""
     if not os.path.exists(config_path):
-        print(f"Warning: Configuration file not found at {config_path}. Using script fallbacks if available.")
+        # This is often expected for default config files that might not exist for all combinations
+        # print(f"Warning: Configuration file not found at {config_path}.") # Removed warning for common use
         return {}
     try:
         with open(config_path, 'r') as f:
@@ -44,6 +46,30 @@ def load_config(config_path="config.yaml"):
     except Exception as e:
         print(f"Error loading YAML configuration from {config_path}: {e}")
         return {}
+
+def load_config(main_config_path: str = "config.yaml",
+                default_config_paths: List[str] = None) -> Dict:
+    """
+    Loads and merges configuration from multiple YAML files.
+    Default config paths are loaded first (lowest priority), then main_config_path (highest priority).
+    """
+    if default_config_paths is None:
+        default_config_paths = []
+
+    # Start with an empty config
+    merged_config = {}
+
+    # Load and merge default configurations
+    for path in default_config_paths:
+        default_cfg = _load_single_yaml_config(path)
+        merged_config = merge_configs(merged_config, default_cfg)
+
+    # Load and merge the main configuration, overriding defaults
+    main_cfg = _load_single_yaml_config(main_config_path)
+    merged_config = merge_configs(merged_config, main_cfg)
+
+    return merged_config
+
 
 def _calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: list) -> pd.DataFrame:
     if not TALIB_AVAILABLE:
@@ -177,7 +203,6 @@ def fetch_and_cache_kline_data(
         print("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
         return pd.DataFrame()
 
-    price_features_to_add = price_features_to_add if price_features_to_add is not None else []
     os.makedirs(cache_dir, exist_ok=True)
 
     daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
@@ -423,20 +448,24 @@ def fetch_and_cache_tick_data(symbol: str, start_date_str: str, end_date_str: st
         start_date_str=start_date_str,
         end_date_str=end_date_str,
         cache_dir=cache_dir,
-        api_key=None,
-        api_secret=None,
-        testnet=False,
-        log_level="normal",
-        api_request_delay_seconds=0.2
+        api_key=None, # These should be set via env vars or client init outside this func
+        api_secret=None, # These should be set via env vars or client init outside this func
+        testnet=False, # This should be set via config
+        log_level="normal", # This should be set via config
+        api_request_delay_seconds=0.2 # This should be set via config
     )
     return df if not df.empty else None
 
 # --- NEW: Function to load data for training, checking for missing days ---
-def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR) -> pd.DataFrame:
+def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR,
+                             binance_settings: Dict = None) -> pd.DataFrame: # Added binance_settings
     """
     Loads tick data (aggregate trades) for a given symbol and date range.
     Checks for and fetches any missing days within the range for training purposes.
     """
+    if binance_settings is None:
+        binance_settings = {} # Use an empty dict if not provided
+
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
@@ -454,7 +483,17 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                 start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
                 end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-                df_fetched_daily = fetch_and_cache_tick_data(symbol, start_datetime_str_for_api, end_datetime_str_for_api, cache_dir=cache_dir)
+                df_fetched_daily = fetch_continuous_aggregate_trades(
+                    symbol=symbol,
+                    start_date_str=start_datetime_str_for_api,
+                    end_date_str=end_datetime_str_for_api,
+                    cache_dir=cache_dir,
+                    api_key=binance_settings.get("api_key"),
+                    api_secret=binance_settings.get("api_secret"),
+                    testnet=binance_settings.get("testnet", False),
+                    log_level=binance_settings.get("log_level", "normal"),
+                    api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2)
+                )
                 
                 if df_fetched_daily is None or df_fetched_daily.empty:
                     print(f"No data was fetched for {symbol} on {date_str}. Skipping this day.")
@@ -488,11 +527,15 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
 
 
 def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: str, interval: str, 
-                              price_features: list, cache_dir: str = DATA_CACHE_DIR) -> pd.DataFrame:
+                              price_features: list, cache_dir: str = DATA_CACHE_DIR,
+                              binance_settings: Dict = None) -> pd.DataFrame: # Added binance_settings
     """
     Loads kline data for a given symbol, interval, and date range.
     Checks for and fetches any missing days within the range.
     """
+    if binance_settings is None:
+        binance_settings = {} # Use an empty dict if not provided
+
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
@@ -518,7 +561,12 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
                     start_date_str=start_datetime_str_for_api,
                     end_date_str=end_datetime_str_for_api,
                     cache_dir=cache_dir,
-                    price_features_to_add=price_features
+                    price_features_to_add=price_features,
+                    api_key=binance_settings.get("api_key"),
+                    api_secret=binance_settings.get("api_secret"),
+                    testnet=binance_settings.get("testnet", False),
+                    log_level=binance_settings.get("log_level", "normal"),
+                    api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2)
                 )
                 
                 if df_fetched_daily is None or df_fetched_daily.empty:
@@ -552,21 +600,27 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
     return combined_df
 
 
-def merge_configs(default_config: dict, loaded_config: dict, section_name: str = "") -> dict:
+def merge_configs(default_config: Dict, loaded_config: Dict) -> Dict:
+    """
+    Recursively merges two dictionaries. Values from loaded_config override
+    values from default_config.
+    """
     merged = default_config.copy()
     if loaded_config:
         for key, value in loaded_config.items():
             if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-                merged[key] = merge_configs(merged[key], value, f"{section_name}.{key if section_name else key}")
+                merged[key] = merge_configs(merged[key], value)
             else:
                 merged[key] = value
     return merged
 
-def generate_config_hash(config_dict: dict, length: int = 7) -> str:
+def generate_config_hash(config_dict: Dict, length: int = 7) -> str:
+    """Generates a hash from a dictionary, ensuring consistent order."""
     config_string = json.dumps(convert_to_native_types(config_dict), sort_keys=True, ensure_ascii=False)
     return hashlib.md5(config_string.encode('utf-8')).hexdigest()[:length]
 
 def convert_to_native_types(data):
+    """Converts numpy types within a dict/list to native Python types."""
     if isinstance(data, list): return [convert_to_native_types(item) for item in data]
     if isinstance(data, dict): return {key: convert_to_native_types(value) for key, value in data.items()}
     if isinstance(data, np.integer): return int(data)
@@ -576,49 +630,61 @@ def convert_to_native_types(data):
     if isinstance(data, pd.Timestamp): return data.isoformat()
     return data
 
-def get_relevant_config_for_hash(
-        full_yaml_config: dict,
-        train_script_fallback_config: dict, 
-        env_script_fallback_config: dict 
-    ) -> dict:
-    effective_train_cfg = train_script_fallback_config 
-    effective_env_cfg = effective_train_cfg.get("environment", env_script_fallback_config)
-    effective_bn_cfg = effective_train_cfg.get("binance_settings", {})
-    effective_ppo_cfg = train_script_fallback_config.get("ppo_params", {})
-
-    hash_keys_structure = full_yaml_config.get("hash_config_keys", {}) 
-
+def get_relevant_config_for_hash(effective_config: Dict) -> Dict:
+    """
+    Extracts relevant configuration parameters for hashing from the effective_config.
+    Dynamically includes agent-specific parameters based on 'agent_type'.
+    """
     relevant_config_for_hash = {}
+    hash_keys_structure = effective_config.get("hash_config_keys", {})
 
+    # Environment keys
     if "environment" in hash_keys_structure and isinstance(hash_keys_structure["environment"], list):
         env_keys_to_hash = hash_keys_structure["environment"]
         relevant_config_for_hash["environment"] = {
-            k: effective_env_cfg.get(k) for k in env_keys_to_hash if k in effective_env_cfg
+            k: effective_config["environment"].get(k) for k in env_keys_to_hash if k in effective_config["environment"]
         }
 
-    if "ppo_params" in hash_keys_structure and isinstance(hash_keys_structure["ppo_params"], list):
-        ppo_keys_to_hash = hash_keys_structure["ppo_params"]
-        relevant_config_for_hash["ppo_params"] = {
-            k: effective_ppo_cfg.get(k) for k in ppo_keys_to_hash if k in effective_ppo_cfg
-        }
-        if "policy_kwargs" in relevant_config_for_hash.get("ppo_params", {}) and \
-           isinstance(relevant_config_for_hash["ppo_params"]["policy_kwargs"], str):
-            try:
-                relevant_config_for_hash["ppo_params"]["policy_kwargs"] = eval(relevant_config_for_hash["ppo_params"]["policy_kwargs"])
-            except Exception:
-                pass
+    # Agent parameters (dynamic based on agent_type)
+    agent_type = effective_config.get("agent_type")
+    if agent_type and "agent_params" in hash_keys_structure and isinstance(hash_keys_structure["agent_params"], dict):
+        if agent_type in hash_keys_structure["agent_params"] and isinstance(hash_keys_structure["agent_params"][agent_type], list):
+            agent_keys_to_hash = hash_keys_structure["agent_params"][agent_type]
+            algo_params_section = effective_config.get(f"{agent_type.lower()}_params", {}) # e.g., ppo_params
+            
+            relevant_agent_params = {}
+            for k in agent_keys_to_hash:
+                if k in algo_params_section:
+                    value = algo_params_section.get(k)
+                    # Special handling for 'policy_kwargs' string to dict conversion for hashing consistency
+                    if k == "policy_kwargs" and isinstance(value, str):
+                        try:
+                            value = eval(value)
+                        except Exception:
+                            pass # If eval fails, hash the string as is
+                    relevant_agent_params[k] = value
+            relevant_config_for_hash["agent_params"] = {agent_type: relevant_agent_params}
 
+    # Binance settings keys
     if "binance_settings" in hash_keys_structure and isinstance(hash_keys_structure["binance_settings"], list):
         bn_keys_to_hash = hash_keys_structure["binance_settings"]
         relevant_config_for_hash["binance_settings"] = {
-            k: effective_bn_cfg.get(k) for k in bn_keys_to_hash if k in effective_bn_cfg
+            k: effective_config["binance_settings"].get(k) for k in bn_keys_to_hash if k in effective_config["binance_settings"]
         }
+    
     return {k: v for k, v in relevant_config_for_hash.items() if v}
 
 
-def resolve_model_path(eval_specific_config: dict, full_yaml_config: dict, train_script_fallback_config: dict, env_script_fallback_config: dict, log_level: str = "normal") -> tuple:
-    model_load_path = eval_specific_config.get("model_path") or eval_specific_config.get("model_load_path")
-    alt_model_load_path = eval_specific_config.get("alt_model_path")
+def resolve_model_path(effective_config: Dict, log_level: str = "normal") -> tuple:
+    """
+    Resolves the path to the trained model.
+    Checks explicit path first, then attempts to reconstruct from training config hash.
+    Returns (resolved_model_path, alt_model_path_info).
+    """
+    run_settings = effective_config.get("run_settings", {})
+    
+    model_load_path = run_settings.get("model_path")
+    alt_model_load_path = run_settings.get("alt_model_path") # This can be used for secondary models if needed
 
     if model_load_path and os.path.exists(model_load_path) and model_load_path.endswith(".zip"):
         if log_level in ["normal", "detailed"]: print(f"Using explicit model_path: {model_load_path}")
@@ -628,22 +694,21 @@ def resolve_model_path(eval_specific_config: dict, full_yaml_config: dict, train
 
     if log_level in ["normal", "detailed"]: print("Attempting to reconstruct model path from training config hash...")
     
-    temp_effective_config_for_hash = merge_configs(train_script_fallback_config, full_yaml_config) 
-    relevant_config_for_hash = get_relevant_config_for_hash(full_yaml_config, temp_effective_config_for_hash, env_script_fallback_config)
+    relevant_config_for_hash = get_relevant_config_for_hash(effective_config)
 
-    train_log_dir_base = temp_effective_config_for_hash.get("run_settings", {}).get("log_dir_base")
-    train_base_model_name = temp_effective_config_for_hash.get("run_settings", {}).get("model_name")
+    train_log_dir_base = run_settings.get("log_dir_base")
+    train_base_model_name = run_settings.get("model_name")
 
     if train_log_dir_base and train_base_model_name:
         if not relevant_config_for_hash and log_level != "none": print("Warning: Cannot auto-find model, relevant config for hash is empty.")
         else:
             config_hash = generate_config_hash(relevant_config_for_hash)
             final_model_name_with_hash = f"{config_hash}_{train_base_model_name}"
-            expected_run_dir = os.path.join(train_log_dir_base, final_model_name_with_hash)
+            # Log directory for models is within logs/training/
+            expected_run_dir = os.path.join("logs", "training", final_model_name_with_hash)
             
             if log_level == "detailed": print(f"Expected run directory for model (based on current config for hash): {expected_run_dir}")
             if log_level == "detailed": print(f"  Relevant parts for hash were: {json.dumps(convert_to_native_types(relevant_config_for_hash), indent=2, sort_keys=True)}")
-
 
             path_best_model = os.path.join(expected_run_dir, "best_model", "best_model.zip")
             path_final_model = os.path.join(expected_run_dir, "trained_model_final.zip")

@@ -8,7 +8,8 @@ import traceback
 import time
 
 # --- Configuration ---
-DEFAULT_CACHE_DIR = "./binance_data_cache/"
+# Use DATA_CACHE_DIR from src.data.utils instead of defining locally
+from src.data.utils import DATA_CACHE_DIR
 
 # Expected columns and their properties for aggregate trades
 EXPECTED_AGG_TRADES_COLUMNS_INFO = {
@@ -278,14 +279,6 @@ def validate_daily_data(filepath: str) -> tuple[bool, str]:
             # For klines, the last candle's *open time* should correspond to the interval just before the end of the day.
             # E.g., for 1h, last candle starts at 23:00:00 (for day ending 23:59:59.999999)
             # The expected last open time is the start of the day + 23 * interval (for 1h) or end of day - interval
-            expected_last_kline_open_time = expected_end.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1) - interval_td
-            # Adjust if the end of the day is exactly 23:59:59.999999 and interval is not a divisor of a day
-            # For daily data, the last candle's OpenTime should be (start of next day - interval)
-            # Example: 2025-05-01 23:59:59.999999 (expected_end)
-            # 2025-05-02 00:00:00 (start of next day)
-            # - 1h interval = 2025-05-01 23:00:00.
-            
-            # Use `expected_end.floor('D') + timedelta(days=1) - interval_td` for robust calculation
             expected_last_kline_open_time = pd.Timestamp(expected_end.date() + timedelta(days=1), tz=timezone.utc) - interval_td
 
             if max_time_in_df < expected_last_kline_open_time - leeway:
@@ -337,8 +330,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cache_dir",
-        default=DEFAULT_CACHE_DIR,
-        help=f"Directory containing cache files. Default: {DEFAULT_CACHE_DIR}"
+        default=DATA_CACHE_DIR, # Use imported DATA_CACHE_DIR
+        help=f"Directory containing cache files. Default: {DATA_CACHE_DIR}"
     )
     args = parser.parse_args()
 
