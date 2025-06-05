@@ -27,7 +27,7 @@ def mock_tick_data():
     tick_dates = pd.date_range(start="2023-01-01 00:00:00", periods=num_ticks, freq='1ms', tz='UTC')
     df = pd.DataFrame(index=tick_dates)
     df['Price'] = base_price + np.cumsum(np.random.randn(num_ticks) * 0.01)
-    df['Quantity'] = np.random.rand(num_ticks) * 10 + 1
+    df['Quantity'] = np.random.rand(1000) * 10 + 1
     df['IsBuyerMaker'] = np.random.choice([True, False], size=num_ticks)
     return df
 
@@ -249,7 +249,6 @@ def test_catastrophic_loss(trading_env):
     # price = (catastrophic_loss_limit - current_balance) / position_volume
     required_price_for_loss = (env.catastrophic_loss_limit - env.current_balance) / (env.position_volume + 1e-9) # Add epsilon to prevent division by zero
     # Set the price slightly below the required price to guarantee the loss condition
-    # FIX: Increased margin to ensure termination despite floating point precision
     price_at_loss = required_price_for_loss - 0.05 
     
     env.decision_prices[env.current_step] = price_at_loss # Apply the manipulated price
@@ -259,7 +258,6 @@ def test_catastrophic_loss(trading_env):
     obs, reward, terminated, truncated, info = env.step(action_hold) 
 
     assert terminated # Verify that the episode terminated
-    # FIX: Updated reward assertion to account for the penalty of holding a losing position.
     assert reward == pytest.approx(env.config["penalty_catastrophic_loss"] + env.config["penalty_hold_losing_position"], rel=1e-2) 
     assert 'sell_ruin_auto' in [t['type'] for t in env.trade_history] # Ensure auto-liquidation event is logged
 
@@ -339,61 +337,95 @@ def test_profit_target_bonus(trading_env):
     and a penalty if profit is below target.
     """
     env = trading_env
+    # Set a custom initial balance for this specific test for cleaner reward calculation
+    env.initial_balance = 1000.0
+    # FIX: Explicitly set catastrophic_loss_limit to a very low negative value to ensure it's not triggered in this test.
+    # This value must be lower than any possible equity to prevent false positives.
+    env.catastrophic_loss_limit = -10000.0 # Set to a very low negative number.
     env.reset()
     
     # Set up a buy action with a specific profit target
-    initial_balance = env.current_balance
-    buy_price = env.decision_prices[env.current_step]
+    # Use a price that results in a round `position_volume` to simplify PnL calculation
+    buy_price = 10.0
+    # Temporarily set the decision price for the current step in the environment's data
+    original_price_at_step_buy = env.decision_prices[env.current_step]
+    env.decision_prices[env.current_step] = buy_price
+
     profit_target = 0.005 # 0.5% target for the test
+    # Ensure `base_trade_amount_ratio` results in a whole number of units to avoid float issues in quantity
+    env.base_trade_amount_ratio = 0.1 # This will result in 10 units for 1000 initial balance, 10.0 buy_price
     buy_action = (1, np.array([profit_target], dtype=np.float32))
     env.step(buy_action) # Execute the buy action
 
+    # Restore original price after buy step
+    env.decision_prices[env.current_step] = original_price_at_step_buy
+
+
     # Simulate price increase to just meet or slightly exceed the profit target
-    env.current_step += 1 # Advance step to get a new decision price point
+    env.current_step += 1 # Advance step to get a new price point
     
     # Ensure current_step is within bounds for decision_prices
     if env.current_step >= len(env.decision_prices):
         env.current_step = len(env.decision_prices) - 1
 
-    target_sell_price_met = buy_price * (1 + profit_target + 0.0001) # Price slightly above target
+    # Price slightly above target
+    target_sell_price_met = buy_price * (1 + profit_target + 0.0001)
     original_price_met_at_step = env.decision_prices[env.current_step]
     env.decision_prices[env.current_step] = target_sell_price_met # Set manipulated price
 
-    sell_action = (2, np.array([0.0], dtype=np.float32)) # Profit target param does not affect sell logic in this scenario
+    sell_action = (2, np.array([0.0], dtype=np.float32))
     obs_met, reward_met, terminated_met, truncated_met, info_met = env.step(sell_action)
     
     # Calculate the expected base reward without any bonus
-    pnl_met = (target_sell_price_met * env.position_volume * (1 - env.commission_pct)) - (buy_price * env.position_volume)
+    # Use the env's current values for position_volume and entry_price as they are set by the buy action
+    pnl_met = (env.position_volume * target_sell_price_met * (1 - env.commission_pct)) - (env.position_volume * buy_price)
     expected_base_reward_met = env.config["reward_sell_profit_base"] + (pnl_met / (env.initial_balance + 1e-9)) * env.config["reward_sell_profit_factor"]
     
     assert reward_met > expected_base_reward_met # Verify that a bonus was received
-    # FIX: Increased relative tolerance for floating-point comparison.
-    assert reward_met == pytest.approx(expected_base_reward_met + env.config["reward_sell_meets_target_bonus"], rel=1e-2) # Use a higher relative tolerance
+    # Adjusted tolerance - increasing relative tolerance and adding absolute tolerance
+    assert reward_met == pytest.approx(expected_base_reward_met + env.config["reward_sell_meets_target_bonus"], rel=1e-3, abs=1e-6)
+
 
     # Restore original price to avoid side effects
     env.decision_prices[env.current_step] = original_price_met_at_step
 
     # Reset environment and test price increase below target
+    env.initial_balance = 1000.0 # Re-set for the second part of the test
+    # FIX: Explicitly set catastrophic_loss_limit to a very low negative value for the second part as well
+    env.catastrophic_loss_limit = -10000.0
     env.reset()
-    env.step(buy_action) # Re-buy to reset state with the same profit target
+    
+    # Re-buy to reset state with the same profit target
+    # Use a price that results in a round `position_volume` to simplify PnL calculation
+    buy_price = 10.0
+    env.base_trade_amount_ratio = 0.1 # This will result in 10 units for 1000 initial balance, 10.0 buy_price
+    original_price_at_step_buy = env.decision_prices[env.current_step]
+    env.decision_prices[env.current_step] = buy_price
+
+    buy_action = (1, np.array([profit_target], dtype=np.float32))
+    env.step(buy_action) # Execute the buy action
+
+    # Restore original price after buy step
+    env.decision_prices[env.current_step] = original_price_at_step_buy
     
     env.current_step += 1 # Advance step
     if env.current_step >= len(env.decision_prices):
         env.current_step = len(env.decision_prices) - 1
 
-    target_sell_price_below = buy_price * (1 + profit_target - 0.0001) # Price slightly below target
+    # Price slightly below target
+    target_sell_price_below = buy_price * (1 + profit_target - 0.0001)
     original_price_below_at_step = env.decision_prices[env.current_step]
     env.decision_prices[env.current_step] = target_sell_price_below # Set manipulated price
 
+    sell_action = (2, np.array([0.0], dtype=np.float32))
     obs_below, reward_below, terminated_below, truncated_below, info_below = env.step(sell_action)
 
     # Calculate expected base reward without any penalty
-    pnl_below = (target_sell_price_below * env.position_volume * (1 - env.commission_pct)) - (buy_price * env.position_volume)
+    pnl_below = (env.position_volume * target_sell_price_below * (1 - env.commission_pct)) - (env.position_volume * buy_price)
     expected_base_reward_below = env.config["reward_sell_profit_base"] + (pnl_below / (env.initial_balance + 1e-9)) * env.config["reward_sell_profit_factor"]
 
     assert reward_below < expected_base_reward_below # Verify that a penalty was applied
-    # FIX: Increased relative tolerance for floating-point comparison.
-    assert reward_below == pytest.approx(expected_base_reward_below + env.config["penalty_sell_profit_below_target"], rel=1e-2) # Use a higher relative tolerance
+    assert reward_below == pytest.approx(expected_base_reward_below + env.config["penalty_sell_profit_below_target"], rel=1e-3, abs=1e-6)
 
     # Restore original price
     env.decision_prices[env.current_step] = original_price_below_at_step

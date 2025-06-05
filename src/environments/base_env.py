@@ -91,7 +91,10 @@ class SimpleTradingEnv(gym.Env):
         self.obs_clip_low = float(self.config["obs_clip_low"])
         self.obs_clip_high = float(self.config["obs_clip_high"])
         self.custom_print_render = self.config.get("custom_print_render", "none")
-        self.log_level = self.config.get("log_level", "normal")
+        self.log_level = self.config.get("log_level", "normal") # Default log level from config
+        
+        # Override log_level for debugging during development if needed
+        # self.log_level = "detailed" # Temporary override for debugging
 
         self.min_profit_target_low = float(self.config.get("min_profit_target_low"))
         self.min_profit_target_high = float(self.config.get("min_profit_target_high"))
@@ -309,6 +312,7 @@ class SimpleTradingEnv(gym.Env):
                                'profit_target':0}]
         if self.log_level == "detailed":
             print(f"ENV_RESET (ID: {self.env_id}): current_step set to {self.current_step}, balance={self.current_balance:.2f}")
+            print(f"ENV_RESET (ID: {self.env_id}): Catastrophic Loss Limit set to {self.catastrophic_loss_limit:.2f}") # Debug print
         return self._get_observation(), self._get_info()
 
     def step(self, action_tuple):
@@ -325,11 +329,12 @@ class SimpleTradingEnv(gym.Env):
         trade_details_for_log = {}
 
         if self.log_level == "detailed":
-            if self.current_step % 100 == 0 or discrete_action != 0:
-                print(f"\n--- ENV_STEP (ID: {self.env_id}, TickStep: {self.current_step}, Time: {self.tick_df.index[self.current_step]}) ---")
-                print(f"  Tick Price: {current_price_for_action:.4f}")
-                print(f"  Action: Discrete={self.ACTION_MAP.get(discrete_action, 'Unk')}, ProfitTgtParam={profit_target_param:.4f}")
-                print(f"  StateB4: Bal={self.current_balance:.2f}, PosOp={self.position_open}, EntryP={self.entry_price:.4f}, Vol={self.position_volume:.4f}, StoredProfitTgt={self.current_desired_profit_target:.4f}")
+            print(f"\n--- ENV_STEP (ID: {self.env_id}, TickStep: {self.current_step}, Time: {self.tick_df.index[self.current_step]}) ---")
+            print(f"  DEBUG: Action: {self.ACTION_MAP.get(discrete_action, 'Unk')}, ProfitTgtParam={profit_target_param:.4f}")
+            print(f"  DEBUG: Initial Reward for step: {reward:.4f}")
+            print(f"  DEBUG: State B4 Action: Bal={self.current_balance:.4f}, PosOp={self.position_open}, EntryP={self.entry_price:.4f}, Vol={self.position_volume:.4f}, TgtP={self.current_desired_profit_target:.4f}")
+            print(f"  DEBUG: Current Tick Price: {current_price_for_action:.4f}")
+
 
         # --- Process Agent's Action ---
         if discrete_action == 1: # BUY
@@ -353,8 +358,13 @@ class SimpleTradingEnv(gym.Env):
                                              'balance': self.current_balance, 'pnl': 0, 'commission': commission_cost, 
                                              'equity': equity_after_buy, 'profit_target_set': self.current_desired_profit_target}
                     trade_executed_this_step = True
-                else: reward += self.config["penalty_buy_insufficient_balance"]
-            else: reward += self.config["penalty_buy_position_already_open"]
+                    if self.log_level == "detailed": print(f"  DEBUG: BUY executed. New balance={self.current_balance:.4f}, Position Vol={self.position_volume:.4f}, Reward={reward:.4f}")
+                else: 
+                    reward += self.config["penalty_buy_insufficient_balance"]
+                    if self.log_level == "detailed": print(f"  DEBUG: BUY failed due to insufficient balance. Reward={reward:.4f}")
+            else: 
+                reward += self.config["penalty_buy_position_already_open"]
+                if self.log_level == "detailed": print(f"  DEBUG: BUY failed as position already open. Reward={reward:.4f}")
 
 
         elif discrete_action == 2: # SELL
@@ -368,15 +378,22 @@ class SimpleTradingEnv(gym.Env):
                 self.current_balance += net_revenue
                 actual_pnl_ratio = (current_price_for_action / self.entry_price - 1) if self.entry_price > 1e-9 else 0
                 
+                if self.log_level == "detailed":
+                    print(f"  DEBUG: SELL in progress. PnL This Trade={pnl_this_trade:.4f}, Actual PnL Ratio={actual_pnl_ratio:.4f}")
+
                 if pnl_this_trade > 0:
                     reward += self.config["reward_sell_profit_base"] + (pnl_this_trade / (self.initial_balance + 1e-9)) * self.config["reward_sell_profit_factor"]
                     if self.current_desired_profit_target > 0:
                         if actual_pnl_ratio >= self.current_desired_profit_target:
                             reward += self.reward_sell_meets_target_bonus
+                            if self.log_level == "detailed": print(f"  DEBUG: Profit target MET. Bonus added. Current Reward={reward:.4f}")
                         else: 
                             reward += self.penalty_sell_profit_below_target 
+                            if self.log_level == "detailed": print(f"  DEBUG: Profit below target. Penalty added. Current Reward={reward:.4f}")
+                    if self.log_level == "detailed": print(f"  DEBUG: Profitable SELL. Base reward added. Current Reward={reward:.4f}")
                 else: 
                     reward += (pnl_this_trade / (self.initial_balance + 1e-9)) * self.config["penalty_sell_loss_factor"] + self.config["penalty_sell_loss_base"]
+                    if self.log_level == "detailed": print(f"  DEBUG: Losing SELL. Penalty added. Current Reward={reward:.4f}")
                 
                 trade_details_for_log = {'type': 'sell', 'price': current_price_for_action, 'volume': self.position_volume, 
                                            'balance': self.current_balance, 'pnl': pnl_this_trade, 'commission': commission_cost, 
@@ -384,28 +401,45 @@ class SimpleTradingEnv(gym.Env):
                                            'pnl_ratio_achieved': actual_pnl_ratio}
                 self.position_open = False; self.entry_price = 0.0; self.position_volume = 0.0; self.current_desired_profit_target = 0.0
                 trade_executed_this_step = True
-            else: reward += self.config["penalty_sell_no_position"]
+                if self.log_level == "detailed": print(f"  DEBUG: SELL executed. New balance={self.current_balance:.4f}, Position Closed. Reward={reward:.4f}")
+            else: 
+                reward += self.config["penalty_sell_no_position"]
+                if self.log_level == "detailed": print(f"  DEBUG: SELL failed as no position open. Reward={reward:.4f}")
 
         elif discrete_action == 0: # HOLD
             if self.position_open:
                 unrealized_pnl_at_hold = (current_price_for_action - self.entry_price) * self.position_volume
-                if unrealized_pnl_at_hold > 0: reward += self.config["reward_hold_profitable_position"]
-                else: reward += self.config["penalty_hold_losing_position"]
-            else: reward += self.config["penalty_hold_flat_position"]
+                if unrealized_pnl_at_hold > 0: 
+                    reward += self.config["reward_hold_profitable_position"]
+                    if self.log_level == "detailed": print(f"  DEBUG: HOLD with profitable position. Reward={reward:.4f}")
+                else: 
+                    reward += self.config["penalty_hold_losing_position"]
+                    if self.log_level == "detailed": print(f"  DEBUG: HOLD with losing position. Reward={reward:.4f}")
+            else: 
+                reward += self.config["penalty_hold_flat_position"]
+                if self.log_level == "detailed": print(f"  DEBUG: HOLD with flat position. Reward={reward:.4f}")
         
         if trade_executed_this_step:
             self.trade_history.append({'step': self.current_step, 'time': self.tick_df.index[self.current_step].isoformat(), **trade_details_for_log})
+            if self.log_level == "detailed": print(f"  DEBUG: Trade logged to history. History Length: {len(self.trade_history)}")
 
         self.current_step += 1
 
         # Check for catastrophic loss or end of data
         current_equity_for_loss_check = self.current_balance + (self.position_volume * current_price_for_action if self.position_open else 0)
+        
+        if self.log_level == "detailed":
+            print(f"  DEBUG: Before Termination Check: current_equity_for_loss_check={current_equity_for_loss_check:.4f}, Cat Loss Limit={self.catastrophic_loss_limit:.4f}, Terminated={terminated}")
+            print(f"  DEBUG: Current Reward before final adjustments: {reward:.4f}")
+
+
         if current_equity_for_loss_check < self.catastrophic_loss_limit:
             terminated = True
             reward += self.config["penalty_catastrophic_loss"]
             if self.position_open:
                 price_at_ruin = self.decision_prices[min(self.current_step -1, self.end_step)]
                 self._liquidate_position(price_at_ruin, "sell_ruin_auto", self.current_step-1)
+            if self.log_level == "detailed": print(f"  DEBUG: CATASTROPHIC LOSS TRIGGERED! New Reward={reward:.4f}, Terminated={terminated}")
 
         if not terminated and self.current_step > self.end_step:
             truncated = True
@@ -414,14 +448,13 @@ class SimpleTradingEnv(gym.Env):
                 _, _, pnl_eof = self._liquidate_position(price_at_eof, "sell_eof_auto", self.end_step)
                 if pnl_eof > 0:
                      reward += (pnl_eof / (self.initial_balance + 1e-9)) * self.config["reward_eof_sell_factor"]
+            if self.log_level == "detailed": print(f"  DEBUG: EPISODE TRUNCATED AT EOF! Reward={reward:.4f}, Truncated={truncated}")
         
         observation = self._get_observation()
         info = self._get_info()
 
-        if self.log_level == "detailed" and (self.current_step % 100 == 1 or discrete_action != 0 or terminated or truncated):
-            print(f"  StateAf: Bal={self.current_balance:.2f}, PosOp={self.position_open}, EntryP={self.entry_price:.4f}, Eq={info['equity']:.2f}")
-            print(f"  Reward: {reward:.4f}. Term: {terminated}. Trunc: {truncated}")
-            if trade_executed_this_step: print(f"  Trade Exec: {self.trade_history[-1]['type']} @ {self.trade_history[-1]['price']:.4f}")
+        if self.log_level == "detailed":
+            print(f"  DEBUG: Final Return: Reward={np.nan_to_num(reward).item():.4f}, Term={terminated}, Trunc={truncated}")
             print(f"--- END ENV_STEP (ID: {self.env_id}, TickStep: {self.current_step-1}) ---")
         
         if self.custom_print_render == "human": self.render(action_taken=discrete_action, profit_target_param=profit_target_param)
