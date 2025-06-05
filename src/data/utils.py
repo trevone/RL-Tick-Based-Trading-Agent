@@ -398,7 +398,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                              binance_settings: Dict = None, tick_resample_interval_ms: int = None,
                              log_level: str = "normal") -> pd.DataFrame:
     
-    print(f"[[load_tick_data_for_range ENTRY]] Log level received: {log_level}"); sys.stdout.flush()
+    if log_level != "none": print(f"[[load_tick_data_for_range ENTRY]] Log level received: {log_level}"); sys.stdout.flush()
 
     if binance_settings is None: binance_settings = {}
 
@@ -442,7 +442,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         date_str_for_day = current_date_obj.strftime('%Y-%m-%d')
         _print_fn = pbar_days.write
         
-        _print_fn(f"[[load_tick_data_for_range DAILY_LOOP]] Day: {date_str_for_day}, Current log_level: {log_level}"); sys.stdout.flush()
+        if log_level != "none": _print_fn(f"[[load_tick_data_for_range DAILY_LOOP]] Day: {date_str_for_day}, Current log_level: {log_level}"); sys.stdout.flush()
 
         if log_level == "detailed": _print_fn(f"\nDEBUG_LOAD_TICK (Daily): --- Processing day: {date_str_for_day} ---"); sys.stdout.flush()
 
@@ -466,7 +466,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
             _print_fn(f"DEBUG_LOAD_TICK (Daily): Daily RESAMPLED file NOT found: {daily_file_path}"); sys.stdout.flush()
 
         if df_daily.empty:
-            _print_fn(f"[[load_tick_data_for_range RAW_CHECK_TRIGGERED]] Resampled empty for {date_str_for_day}. Checking RAW."); sys.stdout.flush()
+            if log_level != "none": _print_fn(f"[[load_tick_data_for_range RAW_CHECK_TRIGGERED]] Resampled empty for {date_str_for_day}. Checking RAW."); sys.stdout.flush()
             if log_level == "detailed": _print_fn(f"DEBUG_LOAD_TICK (Daily): Daily RESAMPLED data for {date_str_for_day} is empty or was not loaded. Attempting to use/fetch RAW."); sys.stdout.flush()
             
             raw_daily_file_path = get_data_path_for_day(date_str_for_day, symbol, data_type="agg_trades", cache_dir=cache_dir)
@@ -486,8 +486,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                  _print_fn(f"DEBUG_LOAD_TICK (Daily): RAW daily file NOT found: {raw_daily_file_path}"); sys.stdout.flush()
 
             if df_raw_daily.empty:
-                if log_level == "detailed": _print_fn(f"DEBUG_LOAD_TICK (Daily): df_raw_daily is empty for {date_str_for_day} (either not found in cache or failed to load from cache). Fetching raw data."); sys.stdout.flush()
-                _print_fn(f"Missing raw daily data for {symbol} on {date_str_for_day}. Fetching."); sys.stdout.flush()
+                if log_level != "none": _print_fn(f"Missing raw daily data for {symbol} on {date_str_for_day}. Fetching."); sys.stdout.flush()
 
                 day_start_dt_utc = datetime.combine(current_date_obj, datetime.min.time(), tzinfo=timezone.utc)
                 day_end_dt_utc = datetime.combine(current_date_obj, datetime.max.time(), tzinfo=timezone.utc)
@@ -576,7 +575,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
 def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: str, interval: str,
                               price_features: list, cache_dir: str = DATA_CACHE_DIR,
                               binance_settings: Dict = None, log_level: str = "normal") -> pd.DataFrame:
-    print(f"[[load_kline_data_for_range ENTRY]] Log level received: {log_level}"); sys.stdout.flush()
+    if log_level != "none": print(f"[[load_kline_data_for_range ENTRY]] Log level received: {log_level}"); sys.stdout.flush()
     if binance_settings is None: binance_settings = {}
 
     sorted_price_features_for_hash = sorted(price_features or [])
@@ -628,7 +627,7 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         date_str_for_day = current_date_obj.strftime('%Y-%m-%d')
         _print_fn_daily = pbar_days_kline.write
 
-        _print_fn_daily(f"[[load_kline_data_for_range DAILY_LOOP]] Day: {date_str_for_day}, Current log_level: {log_level}"); sys.stdout.flush()
+        if log_level != "none": _print_fn_daily(f"[[load_kline_data_for_range DAILY_LOOP]] Day: {date_str_for_day}, Current log_level: {log_level}"); sys.stdout.flush()
 
 
         if log_level == "detailed": _print_fn_daily(f"\nDEBUG_LOAD_KLINE (Daily): --- Processing day: {date_str_for_day} ---"); sys.stdout.flush()

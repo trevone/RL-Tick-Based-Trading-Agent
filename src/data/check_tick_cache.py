@@ -43,7 +43,7 @@ KLINE_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_klines)_"     # Matches the fixed prefix "bn_klines_"
     r"(?P<symbol>[A-Z0-9]+)_"      # Matches the symbol (e.g., BTCUSDT)
     r"(?P<interval>[a-zA-Z0-9]+)_" # Matches the interval (e.g., 1h, 1m, 1d)
-    r"(?P<date>\d{4}-\d{2}-\d{2})"     # Matchesnemidophorus-MM-DD
+    r"(?P<date>\d{4}-\d{2}-\d{2})"     # Matches Cnemidophorus-MM-DD
     r"(?P<features>_([a-zA-Z0-9]+(_[a-zA-Z0-9]+)*))?" # Optional features part (e.g., _sma20_rsi14_volume)
     r"\.parquet$"                  # Matches ".parquet" extension
 )
