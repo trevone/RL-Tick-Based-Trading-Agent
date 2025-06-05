@@ -57,15 +57,17 @@ def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
 
+# Global variable to control logging level, can be set by main()
+current_log_level_for_plotting = "normal"
+
 def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: str, log_dir: str, title: str = "Agent Performance"):
     """
     Plots the price, account balance, and trade actions.
     """
+    global current_log_level_for_plotting # Use the global log level
+
     if not trade_history:
-        # Use current_log_level if available globally, otherwise print
-        if 'current_log_level' in globals() and current_log_level == "none":
-            pass
-        else:
+        if current_log_level_for_plotting != "none":
             print("No trade history to plot.")
         return
 
@@ -103,15 +105,16 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
             price_data.index = pd.to_datetime(price_data.index, utc=True)
         price_data_plot = price_data.sort_index()
 
-        if not equity_balance_df.empty:
+        if not equity_balance_df.empty: # Adjust price data range if equity data exists
             min_plot_time = equity_balance_df.index.min()
             max_plot_time = equity_balance_df.index.max()
             min_plot_time -= pd.Timedelta(minutes=5)
             max_plot_time += pd.Timedelta(minutes=5)
             price_data_plot = price_data_plot[(price_data_plot.index >= min_plot_time) & (price_data_plot.index <= max_plot_time)]
+        # If equity_balance_df is empty, plot all available price_data for the period
     else:
-        if 'current_log_level' in globals() and current_log_level == "none": pass
-        else: print("Warning: No price data available for plotting.")
+        if current_log_level_for_plotting != "none":
+            print("Warning: No price data available for plotting.")
         return
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 12), sharex=True) 
@@ -128,23 +131,20 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
         ax2.plot(equity_balance_df.index, equity_balance_df['equity'], label='Equity', color='purple', linewidth=1.5)
         ax2.plot(equity_balance_df.index, equity_balance_df['balance'], label='Balance', color='orange', linewidth=0.8, linestyle='--')
     else:
-        if 'current_log_level' in globals() and current_log_level == "none": pass
-        else: print("Warning: No equity/balance history to plot.")
+        if current_log_level_for_plotting != "none":
+            print("Note: Equity/balance chart is empty as no relevant trade history was found.")
 
 
     ax2.set_title('Account Equity and Balance')
     ax2.set_xlabel('Time')
     ax2.set_ylabel('Amount ($)')
-    ax2.legend()
-    handles, labels = ax2.get_legend_handles_labels()
-    if handles: # Only call legend if there are handles (i.e., labeled plots)
-        ax2.legend()
-    # else: # Optionally print a message if you want to know legend was skipped
-    #     if 'current_log_level' in globals() and current_log_level != "none":
-    #         print("Note: Legend for equity/balance chart skipped as no data was plotted.")
-
-    ax2.grid(True, linestyle='--', alpha=0.6)
     
+    # UPDATED: Conditional legend for ax2
+    handles, labels = ax2.get_legend_handles_labels()
+    if handles: 
+        ax2.legend()
+        
+    ax2.grid(True, linestyle='--', alpha=0.6)
 
     fig.autofmt_xdate()
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
@@ -153,20 +153,18 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
     plot_filename = os.path.join(log_dir, f"{eval_run_id}_performance_chart.png")
     try:
         plt.savefig(plot_filename)
-        if 'current_log_level' in globals() and current_log_level != "none": 
+        if current_log_level_for_plotting != "none": 
             print(f"Performance chart saved to {plot_filename}")
     except Exception as e:
         print(f"Error saving plot: {e}")
-    plt.close(fig) # Close the figure to free memory, especially in loops or tests
+    plt.close(fig) 
 
-# Global variable to control logging level
-current_log_level = "normal"
 
 def main():
-    global current_log_level 
+    global current_log_level_for_plotting # Allow main to set the global for plot_performance
     effective_eval_config = load_default_configs_for_evaluation()
     
-    current_log_level = effective_eval_config.get("run_settings", {}).get("log_level", "normal")
+    current_log_level_for_plotting = effective_eval_config.get("run_settings", {}).get("log_level", "normal")
     agent_type = effective_eval_config.get("agent_type", "PPO") 
 
     eval_env_config_for_instance = effective_eval_config["environment"].copy() 
@@ -175,7 +173,7 @@ def main():
 
     model_load_path, _ = resolve_model_path(
         effective_config=effective_eval_config,
-        log_level=current_log_level
+        log_level=current_log_level_for_plotting
     )
 
     if not model_load_path:
@@ -187,15 +185,15 @@ def main():
     eval_log_dir = os.path.join(eval_log_dir_base, eval_run_id)
     os.makedirs(eval_log_dir, exist_ok=True)
 
-    if current_log_level != "none":
-        print(f"--- Evaluating Model: {model_load_path} (Log Level: {current_log_level}) ---")
+    if current_log_level_for_plotting != "none":
+        print(f"--- Evaluating Model: {model_load_path} (Log Level: {current_log_level_for_plotting}) ---")
         print(f"Evaluation run ID: {eval_run_id}")
         print(f"Evaluation logs and charts will be saved to: {eval_log_dir}")
         print(f"Agent Type: {agent_type}")
 
     with open(os.path.join(eval_log_dir, "effective_eval_config.json"), "w") as f:
         json.dump(convert_to_native_types(effective_eval_config), f, indent=4)
-    if current_log_level != "none":
+    if current_log_level_for_plotting != "none":
         print("Effective evaluation configuration saved to effective_eval_config.json")
 
     eval_binance_settings = effective_eval_config["binance_settings"]
@@ -203,7 +201,7 @@ def main():
     kline_features_for_data_fetch = eval_env_config_for_instance["kline_price_features"]
     tick_resample_interval_ms = eval_env_config_for_instance.get("tick_resample_interval_ms")
 
-    if current_log_level != "none": print("\n--- Fetching and preparing K-line evaluation data ---")
+    if current_log_level_for_plotting != "none": print("\n--- Fetching and preparing K-line evaluation data ---")
     eval_kline_df = pd.DataFrame() 
     try:
         eval_kline_df = load_kline_data_for_range(
@@ -217,13 +215,13 @@ def main():
         )
         if eval_kline_df.empty:
             raise ValueError("K-line evaluation data is empty. Cannot proceed with evaluation.")
-        if current_log_level != "none": print(f"K-line eval data loaded: {eval_kline_df.shape} from {eval_kline_df.index.min()} to {eval_kline_df.index.max()}")
+        if current_log_level_for_plotting != "none": print(f"K-line eval data loaded: {eval_kline_df.shape} from {eval_kline_df.index.min()} to {eval_kline_df.index.max()}")
     except Exception as e:
         print(f"ERROR: K-line evaluation data not loaded. Details: {e}")
         traceback.print_exc()
         raise 
 
-    if current_log_level != "none": print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
+    if current_log_level_for_plotting != "none": print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
     eval_tick_df = pd.DataFrame() 
     try:
         eval_tick_df = load_tick_data_for_range(
@@ -236,7 +234,7 @@ def main():
         )
         if eval_tick_df.empty:
             raise ValueError("Tick evaluation data is empty. Cannot proceed with evaluation.")
-        if current_log_level != "none": print(f"Tick eval data loaded: {eval_tick_df.shape} from {eval_tick_df.index.min()} to {eval_tick_df.index.max()}")
+        if current_log_level_for_plotting != "none": print(f"Tick eval data loaded: {eval_tick_df.shape} from {eval_tick_df.index.min()} to {eval_tick_df.index.max()}")
     except Exception as e:
         print(f"ERROR: Tick evaluation data not loaded. Details: {e}")
         traceback.print_exc()
@@ -257,11 +255,11 @@ def main():
             env_for_model = VecNormalize.load(vec_normalize_stats_path, env_for_model) 
             env_for_model.training = False 
             env_for_model.norm_reward = False 
-            if current_log_level != "none": print(f"VecNormalize statistics loaded and applied from: {vec_normalize_stats_path}")
+            if current_log_level_for_plotting != "none": print(f"VecNormalize statistics loaded and applied from: {vec_normalize_stats_path}")
         else:
-            if current_log_level != "none": print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Evaluation observations will NOT be normalized consistently with training.")
+            if current_log_level_for_plotting != "none": print(f"WARNING: VecNormalize stats not found at {vec_normalize_stats_path}. Evaluation observations will NOT be normalized consistently with training.")
             
-        if current_log_level != "none": print("\nEvaluation environment created successfully and configured for normalization.")
+        if current_log_level_for_plotting != "none": print("\nEvaluation environment created successfully and configured for normalization.")
     except Exception as e:
         print(f"Error creating evaluation environment: {e}")
         traceback.print_exc()
@@ -278,7 +276,7 @@ def main():
         if not model_class: raise ValueError(f"Unknown agent type: {agent_type}.")
 
         model = model_class.load(model_load_path, env=env_for_model) 
-        if current_log_level != "none": print("Model loaded successfully for evaluation.")
+        if current_log_level_for_plotting != "none": print("Model loaded successfully for evaluation.")
     except Exception as e:
         print(f"Error loading agent model from '{model_load_path}': {e}")
         traceback.print_exc()
@@ -286,7 +284,7 @@ def main():
         return
 
     num_eval_episodes = eval_data_settings.get('n_evaluation_episodes', 3)
-    if current_log_level != "none": print(f"Starting evaluation for {num_eval_episodes} episodes...")
+    if current_log_level_for_plotting != "none": print(f"Starting evaluation for {num_eval_episodes} episodes...")
     all_episodes_rewards, all_episodes_profits_pct = [], []
     all_combined_trade_history = [] 
     current_info = {} 
@@ -299,30 +297,36 @@ def main():
         
         actual_base_env = None
         try:
-            if isinstance(env_for_model.venv, DummyVecEnv):
-                actual_base_env = env_for_model.venv.envs[0].env.env 
+            if isinstance(env_for_model.venv, DummyVecEnv): # Check if venv is DummyVecEnv
+                # Access path: VecNormalize -> DummyVecEnv -> Monitor -> FlattenAction -> SimpleTradingEnv
+                monitor_env = env_for_model.venv.envs[0] # This is the Monitor instance
+                if hasattr(monitor_env, 'env') and isinstance(monitor_env.env, FlattenAction):
+                    flatten_action_env = monitor_env.env
+                    if hasattr(flatten_action_env, 'env') and isinstance(flatten_action_env.env, SimpleTradingEnv):
+                         actual_base_env = flatten_action_env.env
         except AttributeError: 
-            if current_log_level != "none": print("Warning: Could not reliably access underlying SimpleTradingEnv instance.")
+            if current_log_level_for_plotting != "none": 
+                print("Warning: Could not reliably access underlying SimpleTradingEnv instance.")
         
         initial_balance_this_episode = actual_base_env.initial_balance if actual_base_env else eval_env_config_for_instance.get("initial_balance", DEFAULT_ENV_CONFIG["initial_balance"])
 
-        if current_log_level != "none": print(f"\n--- Evaluation Episode {episode + 1}/{num_eval_episodes} (Initial Balance: {initial_balance_this_episode:.2f}) ---")
+        if current_log_level_for_plotting != "none": print(f"\n--- Evaluation Episode {episode + 1}/{num_eval_episodes} (Initial Balance: {initial_balance_this_episode:.2f}) ---")
 
         while not (terminated or truncated):
             action_array, _states = model.predict(obs, deterministic=eval_data_settings.get("deterministic_prediction", True))
-            
-            # MODIFIED: Wrap action_array for VecEnv.step()
             obs, reward, done_array, info_list = env_for_model.step([action_array]) 
             
             terminated = done_array[0] 
             current_info = info_list[0] 
-            # More robust truncation check for Gymnasium environments
-            if "TimeLimit.truncated" in current_info: # Standard Gymnasium truncation info
+            if "TimeLimit.truncated" in current_info: 
                 truncated = current_info["TimeLimit.truncated"]
-            elif "is_success" in current_info and current_info["is_success"] is False : # Some envs might use this
-                 truncated = True # Treat as truncated if not successful and done
-            else: # Fallback if specific keys are missing
-                 truncated = terminated and not current_info.get('TimeLimit.truncated', True) # If done and not explicitly truncated by time limit, could be other truncation
+            elif current_info.get("is_success") is False : 
+                 truncated = True 
+            # Ensure truncated is True if terminated is True and no explicit TimeLimit.truncated
+            elif terminated and not current_info.get('TimeLimit.truncated', False):
+                 truncated = True # Consider it truncated if episode ends for other reasons than TimeLimit
+            else:
+                 truncated = False
 
 
             discrete_action_for_log = int(np.round(action_array[0])) 
@@ -334,10 +338,10 @@ def main():
             print_freq = eval_data_settings.get("print_step_info_freq", 50)
             action_map_for_log = actual_base_env.ACTION_MAP if actual_base_env else {0:"Hold",1:"Buy",2:"Sell"}
 
-            if current_log_level == "normal" and current_episode_step % print_freq == 0 :
+            if current_log_level_for_plotting == "normal" and current_episode_step % print_freq == 0 :
                 print(f"  Step: {current_info.get('current_step')}, Action: {action_map_for_log.get(discrete_action_for_log, 'Unknown')}, "
                       f"Reward: {reward[0]:.3f}, Equity: {current_info.get('equity',0):.2f}")
-            elif current_log_level == "detailed":
+            elif current_log_level_for_plotting == "detailed":
                 print(f"  Step: {current_info.get('current_step')}, Action: {action_map_for_log.get(discrete_action_for_log, 'Unknown')}, ProfitTgt: {profit_target_param_for_log:.4f}, "
                       f"Reward: {reward[0]:.3f}, Equity: {current_info.get('equity',0):.2f}, Pos: {current_info.get('position_open')}")
             
@@ -347,7 +351,7 @@ def main():
         final_equity = current_info.get('equity', initial_balance_this_episode)
         episode_profit_pct = ((final_equity - initial_balance_this_episode) / (initial_balance_this_episode + 1e-9)) * 100
 
-        if current_log_level != "none":
+        if current_log_level_for_plotting != "none":
             print(f"Episode finished. Steps: {current_episode_step}. Reward: {episode_reward:.2f}. "
                   f"Final Equity: {final_equity:.2f} Profit: {episode_profit_pct:.2f}%")
         all_episodes_profits_pct.append(episode_profit_pct)
@@ -355,7 +359,7 @@ def main():
 
         if actual_base_env and hasattr(actual_base_env, 'trade_history'):
             all_combined_trade_history.extend(actual_base_env.trade_history)
-            if current_log_level == "detailed" or (actual_base_env.trade_history and len(actual_base_env.trade_history) > 1):
+            if current_log_level_for_plotting == "detailed" or (actual_base_env.trade_history and len(actual_base_env.trade_history) > 1):
                  print(f"--- Trade History Ep {episode+1} (Last 10 trades if any) ---")
                  temp_episode_trades_native_for_print = convert_to_native_types(actual_base_env.trade_history)
                  relevant_trades = [t for t in temp_episode_trades_native_for_print if t.get('type') != 'initial_balance']
@@ -363,7 +367,7 @@ def main():
                     [print(f"  {json.dumps(t)}") for t in relevant_trades[-10:]] 
                  else:
                     print("  No trades executed in this episode.")
-            elif current_log_level == "normal":
+            elif current_log_level_for_plotting == "normal":
                 episode_info_from_monitor = current_info.get('episode', {})
                 num_trades = current_info.get('num_trades_in_episode', 0) 
                 if not num_trades and episode_info_from_monitor: 
@@ -380,39 +384,39 @@ def main():
             os.makedirs(os.path.dirname(trade_history_save_path), exist_ok=True)
             with open(trade_history_save_path, 'w') as f:
                 json.dump(data_to_save, f, indent=4)
-            if current_log_level != "none": print(f"\nFull evaluation trade history saved to: {trade_history_save_path}")
+            if current_log_level_for_plotting != "none": print(f"\nFull evaluation trade history saved to: {trade_history_save_path}")
         except Exception as e:
             print(f"Error saving trade history: {e}")
             traceback.print_exc()
 
-    if current_log_level != "none": print("\n--- Overall Evaluation Summary ---")
+    if current_log_level_for_plotting != "none": print("\n--- Overall Evaluation Summary ---")
     num_episodes_actually_run = len(all_episodes_rewards)
     if num_episodes_actually_run > 0:
-        if current_log_level != "none":
+        if current_log_level_for_plotting != "none":
             print(f"Number of episodes run: {num_episodes_actually_run}")
             print(f"Average Reward: {float(np.mean(all_episodes_rewards)):.2f} (Std: {float(np.std(all_episodes_rewards)):.2f})")
             print(f"Median Reward: {float(np.median(all_episodes_rewards)):.2f}")
             print(f"Average Profit: {float(np.mean(all_episodes_profits_pct)):.2f}% (Std: {float(np.std(all_episodes_profits_pct)):.2f}%)")
             print(f"Median Profit: {float(np.median(all_episodes_profits_pct)):.2f}%")
             print(f"Min Profit: {float(np.min(all_episodes_profits_pct)):.2f}%, Max Profit: {float(np.max(all_episodes_profits_pct)):.2f}%")
-    elif current_log_level != "none":
+    elif current_log_level_for_plotting != "none":
         print("No evaluation episodes completed or no data to summarize.")
 
-    if current_log_level != "none": print("\n--- Generating Performance Chart ---")
-    if not eval_tick_df.empty: # Ensure eval_tick_df is not empty before accessing 'Price'
+    if current_log_level_for_plotting != "none": print("\n--- Generating Performance Chart ---")
+    if not eval_tick_df.empty: 
         plot_price_data_series = eval_tick_df['Price'].copy()
         plot_price_data_series.name = eval_binance_settings['default_symbol'] 
 
         plot_performance(all_combined_trade_history, plot_price_data_series, eval_run_id, eval_log_dir,
                         title=f"Agent Evaluation: {eval_binance_settings['default_symbol']} ({eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']})")
-    elif current_log_level != "none":
+    elif current_log_level_for_plotting != "none":
         print("Skipping plot generation as eval_tick_df is empty.")
 
 
     if env_for_model:
         env_for_model.close()
-        if current_log_level != "none": print("Evaluation environment closed.")
-    if current_log_level != "none": print("\n--- Evaluation script finished ---")
+        if current_log_level_for_plotting != "none": print("Evaluation environment closed.")
+    if current_log_level_for_plotting != "none": print("\n--- Evaluation script finished ---")
 
 
 if __name__ == '__main__':
