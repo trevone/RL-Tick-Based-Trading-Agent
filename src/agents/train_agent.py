@@ -21,6 +21,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.common.utils import get_schedule_fn # For updating LR schedule
 
 try:
     from sb3_contrib import RecurrentPPO
@@ -68,7 +69,7 @@ def train_agent(
         print(f"Error loading or merging configuration: {e}. Using minimal fallback.")
         traceback.print_exc()
         effective_config = {
-            "run_settings": {"log_level": "normal", "log_dir_base": "./logs/training/", "model_name": "fallback_agent", "eval_freq_episodes": 10, "n_evaluation_episodes": 3},
+            "run_settings": {"log_level": "normal", "log_dir_base": "./logs/training/", "model_name": "fallback_agent", "eval_freq_episodes": 10, "n_evaluation_episodes": 3, "continue_from_existing_model": False},
             "environment": DEFAULT_ENV_CONFIG.copy(),
             "ppo_params": {"total_timesteps": 100000, "policy_kwargs": "{'net_arch': [64, 64]}"},
             "binance_settings": {"default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": DATA_CACHE_DIR,
@@ -98,22 +99,22 @@ def train_agent(
     env_config["custom_print_render"] = "none" if current_log_level == "none" else env_config.get("custom_print_render", "none")
 
     run_id = "optuna_trial"
-    log_dir = "./optuna_temp_logs"
-    model_save_dir = log_dir
+    log_dir = "./optuna_temp_logs" # Default for Optuna if log_to_file is False
+    model_save_dir = log_dir # For EvalCallback, best_model_save_path
 
     if log_to_file:
         relevant_config_for_hash = get_relevant_config_for_hash(effective_config)
         config_hash = generate_config_hash(relevant_config_for_hash)
         run_id = f"{config_hash}_{run_settings['model_name']}"
         log_dir_base = run_settings.get("log_dir_base", "logs/")
-        
+
         if "training" not in log_dir_base.lower().replace("\\", "/").split("/"):
             log_dir_base_for_training_runs = os.path.join(log_dir_base, "training")
         else:
             log_dir_base_for_training_runs = log_dir_base
-            
+
         log_dir = os.path.join(log_dir_base_for_training_runs, run_id)
-        model_save_dir = os.path.join(log_dir, "best_model")
+        model_save_dir = os.path.join(log_dir, "best_model") # For EvalCallback best model
 
         os.makedirs(log_dir, exist_ok=True)
         os.makedirs(model_save_dir, exist_ok=True)
@@ -125,7 +126,7 @@ def train_agent(
             print(f"Warning: Could not save effective_train_config.json: {e_json}")
 
     tensorboard_log_dir = os.path.join("logs", "tensorboard_logs") if log_to_file else None
-    tb_log_name = run_id if log_to_file else None
+    tb_log_name = run_id if log_to_file else None # tb_log_name is just the run_id for subfolder in tensorboard_log_dir
 
     print(f"Training run ID: {run_id} (Log Level: {current_log_level})")
     print(f"Agent Type: {agent_type}")
@@ -192,8 +193,9 @@ def train_agent(
         traceback.print_exc()
         return -np.inf
 
-    env = None
-    eval_env_for_callback = None
+    # Create the base vectorized environment (non-normalized)
+    # This `vec_env` will be passed to VecNormalize.load if stats exist.
+    vec_env_for_norm = None
     try:
         def create_env_fn(tick_data: pd.DataFrame, kline_data: pd.DataFrame, env_config_dict: dict, monitor_filepath: str = None):
             def _init_env():
@@ -204,23 +206,47 @@ def train_agent(
             return _init_env
 
         current_env_config_for_train = env_config.copy()
-
         train_monitor_path = os.path.join(log_dir, "train_monitor.csv") if log_to_file else None
-        vec_env = make_vec_env(
+        
+        vec_env_for_norm = make_vec_env(
             create_env_fn(tick_df_train, kline_df_train, current_env_config_for_train, train_monitor_path),
-            n_envs=1,
+            n_envs=1, # For now, assuming n_envs=1 for simplicity with VecNormalize loading
             seed=np.random.randint(0, 10000)
         )
-        env = VecNormalize(vec_env, norm_obs=True, norm_reward=False, clip_obs=10.)
-        if current_log_level != "none": print(f"\nTraining Environment created: Obs Space {env.observation_space.shape}, Act Space {env.action_space.shape}")
     except Exception as e:
-        print(f"ERROR: Failed to create training environment: {e}")
+        print(f"ERROR: Failed to create base training VecEnv: {e}")
         traceback.print_exc()
-        if env: env.close()
+        if vec_env_for_norm: vec_env_for_norm.close()
         return -np.inf
+        
+    # Initialize or load VecNormalize
+    env = None # This will be our final, possibly normalized, environment
+    current_run_vec_normalize_path = os.path.join(log_dir, "vec_normalize.pkl")
 
-    eval_callback = None
-    if current_log_level != "none":
+    if run_settings.get("continue_from_existing_model", False) and os.path.exists(current_run_vec_normalize_path):
+        if current_log_level != "none": print(f"Retraining: Found existing VecNormalize stats at {current_run_vec_normalize_path}. Loading them.")
+        try:
+            env = VecNormalize.load(current_run_vec_normalize_path, vec_env_for_norm)
+            env.training = True # Ensure it's set for training mode
+            env.norm_reward = False # As per current setup (usually norm_reward=False for training stability)
+            if current_log_level != "none": print("VecNormalize stats loaded and env re-wrapped.")
+        except Exception as e_vn_load:
+            if current_log_level != "none": print(f"Retraining: Failed to load VecNormalize stats: {e_vn_load}. Initializing new stats.")
+            traceback.print_exc()
+            env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
+    else:
+        if current_log_level != "none":
+            if run_settings.get("continue_from_existing_model", False):
+                 print(f"Retraining: VecNormalize stats not found at {current_run_vec_normalize_path}. Initializing new stats.")
+            else:
+                 print("Initializing new VecNormalize stats.")
+        env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
+
+    if current_log_level != "none": print(f"\nTraining Environment (VecNormalize) created: Obs Space {env.observation_space.shape}, Act Space {env.action_space.shape}")
+
+
+    eval_env_for_callback = None # For EvalCallback
+    if current_log_level != "none": # Only setup eval_env if not in "none" log_level (e.g. Optuna)
         eval_start_date_kline = evaluation_data_config["start_date_kline_eval"]
         eval_end_date_kline = evaluation_data_config["end_date_kline_eval"]
         eval_start_date_tick = evaluation_data_config.get("start_date_tick_eval", evaluation_data_config["start_date_eval"])
@@ -260,12 +286,17 @@ def train_agent(
                 current_env_config_for_eval['custom_print_render'] = "none"
 
                 eval_monitor_path = os.path.join(log_dir, "eval_monitor.csv") if log_to_file else None
-                eval_vec_env = make_vec_env(
+                
+                # Create a separate VecEnv for evaluation to be normalized
+                eval_vec_env_for_norm = make_vec_env(
                     create_env_fn(tick_df_eval, kline_df_eval, current_env_config_for_eval, eval_monitor_path),
                     n_envs=1, seed=np.random.randint(0,10000)
                 )
-                eval_env_for_callback = VecNormalize(eval_vec_env, norm_obs=True, norm_reward=False, clip_obs=10.)
-                eval_env_for_callback.training = False
+                # Normalize eval_env using the stats from the training env OR loaded stats
+                eval_env_for_callback = VecNormalize(eval_vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
+                eval_env_for_callback.obs_rms = env.obs_rms # Use same running mean/std as training env
+                eval_env_for_callback.ret_rms = env.ret_rms # Not used if norm_reward=False
+                eval_env_for_callback.training = False # Set to eval mode
                 eval_env_for_callback.norm_reward = False
 
                 stop_train_callback = StopTrainingOnNoModelImprovement(
@@ -276,11 +307,11 @@ def train_agent(
                 
                 approx_steps_per_train_episode = max(1, len(tick_df_train) - env_config.get("tick_feature_window_size", 50))
                 eval_freq_steps = int(run_settings.get("eval_freq_episodes", 10) * approx_steps_per_train_episode)
-                eval_freq_steps = max(eval_freq_steps, 1)
+                eval_freq_steps = max(eval_freq_steps, 1) # Ensure > 0
 
                 eval_callback = EvalCallback(
                     eval_env_for_callback,
-                    best_model_save_path=model_save_dir if log_to_file else None,
+                    best_model_save_path=model_save_dir if log_to_file else None, # model_save_dir is .../best_model/
                     log_path=log_dir if log_to_file else None,
                     eval_freq=eval_freq_steps,
                     n_eval_episodes=run_settings.get("n_evaluation_episodes", 3),
@@ -295,17 +326,22 @@ def train_agent(
                 if current_log_level != "none": print(f"WARNING: Failed to set up EvalCallback: {e_eval_setup}.")
                 traceback.print_exc()
                 eval_callback = None
-                if eval_env_for_callback: eval_env_for_callback.close()
-                eval_env_for_callback = None
+                if eval_env_for_callback: eval_env_for_callback.close() # Close if created
+                eval_env_for_callback = None # Ensure it's None
         else:
             if current_log_level != "none": print("EvalCallback skipped: Not enough evaluation data (K-line or Tick data is empty).")
-    else:
-        if run_settings.get("log_level", "normal") != "none":
+            eval_callback = None # Ensure it's None if data is missing
+    else: # current_log_level == "none"
+        if run_settings.get("log_level", "normal") != "none": # Check original intended log_level
              print("EvalCallback skipped due to log_level='none' (likely Optuna trial or test).")
+        eval_callback = None
 
+
+    # Model Initialization or Loading for Retraining
     model = None
+    model_loaded_for_retraining = False
     algo_params_for_init = algo_params.copy()
-    total_timesteps_for_learn = algo_params_for_init.pop("total_timesteps", 100000)
+    total_timesteps_for_learn = algo_params_for_init.pop("total_timesteps", 100000) # Pop for constructor, use var for learn()
 
     if "policy_kwargs" in algo_params_for_init and isinstance(algo_params_for_init["policy_kwargs"], str):
         try:
@@ -313,33 +349,88 @@ def train_agent(
         except Exception as e_eval_pk:
             if current_log_level != "none": print(f"WARNING: Could not parse policy_kwargs string: {e_eval_pk}. Using defaults or none.")
             if "policy_kwargs" in algo_params_for_init: del algo_params_for_init["policy_kwargs"]
-
-    try:
-        model_class_map = {"PPO": PPO, "SAC": SAC, "DDPG": DDPG, "A2C": A2C}
-        model_class = None
-        if agent_type == "RecurrentPPO":
-            if SB3_CONTRIB_AVAILABLE: model_class = RecurrentPPO
-            else: raise ImportError("RecurrentPPO requested but sb3_contrib not found.")
+    
+    model_class_map = {"PPO": PPO, "SAC": SAC, "DDPG": DDPG, "A2C": A2C}
+    model_class = None
+    if agent_type == "RecurrentPPO":
+        if SB3_CONTRIB_AVAILABLE: model_class = RecurrentPPO
         else:
-            model_class = model_class_map.get(agent_type)
+            print("ERROR: RecurrentPPO requested but sb3_contrib not found.")
+            if env: env.close()
+            if eval_env_for_callback: eval_env_for_callback.close()
+            return -np.inf # Fatal error for this config
+    else:
+        model_class = model_class_map.get(agent_type)
 
-        if not model_class: raise ValueError(f"Unknown or unsupported agent type: {agent_type}")
-
-        model = model_class(
-            "MlpPolicy" if agent_type != "RecurrentPPO" else "MlpLstmPolicy",
-            env,
-            verbose=1 if current_log_level == "detailed" else 0,
-            tensorboard_log=tensorboard_log_dir,
-            device=run_settings.get("device", "auto"),
-            **algo_params_for_init
-        )
-        if current_log_level != "none": print(f"\n{agent_type} Agent created. Total timesteps for training: {total_timesteps_for_learn}")
-    except Exception as e_model_create:
-        print(f"ERROR: Failed to create {agent_type} agent: {e_model_create}")
-        traceback.print_exc()
+    if not model_class:
+        print(f"ERROR: Unknown or unsupported agent type: {agent_type}")
         if env: env.close()
         if eval_env_for_callback: eval_env_for_callback.close()
         return -np.inf
+
+    if run_settings.get("continue_from_existing_model", False) and log_to_file: # Retraining only makes sense if logs are saved
+        potential_best_model_path = os.path.join(model_save_dir, "best_model.zip") # model_save_dir is .../best_model/
+        potential_final_model_path = os.path.join(log_dir, "trained_model_final.zip")
+        potential_interrupted_model_path = os.path.join(log_dir, "trained_model_interrupted.zip")
+
+        model_path_to_load_for_retrain = None
+        if os.path.exists(potential_best_model_path):
+            model_path_to_load_for_retrain = potential_best_model_path
+        elif os.path.exists(potential_final_model_path):
+            model_path_to_load_for_retrain = potential_final_model_path
+        elif os.path.exists(potential_interrupted_model_path):
+            model_path_to_load_for_retrain = potential_interrupted_model_path
+        
+        if model_path_to_load_for_retrain:
+            if current_log_level != "none": print(f"Retraining: Attempting to load model from {model_path_to_load_for_retrain} to continue training.")
+            try:
+                model = model_class.load(
+                    model_path_to_load_for_retrain,
+                    env=env, # Use the VecNormalize env (possibly with loaded stats)
+                    device=run_settings.get("device", "auto")
+                )
+                
+                # If learning_rate is in current config, attempt to update the loaded model's LR for the new training phase
+                if "learning_rate" in algo_params_for_init:
+                    new_lr = algo_params_for_init["learning_rate"]
+                    try:
+                        current_lr_attr = getattr(model, "learning_rate", None) # Works for PPO, A2C, SAC
+                        if current_lr_attr is not None and current_lr_attr != new_lr :
+                            model.learning_rate = new_lr
+                            if hasattr(model, "_setup_lr_schedule"): model._setup_lr_schedule()
+                            if current_log_level != "none": print(f"Retraining: Updated model learning rate to {new_lr}.")
+                        elif current_log_level != "none" and current_lr_attr is not None:
+                             print(f"Retraining: Loaded model learning rate {current_lr_attr} matches current config or no update needed.")
+                    except AttributeError:
+                        if current_log_level != "none": print(f"Retraining: Could not directly set learning_rate for {agent_type}. Optimizer LR might need agent-specific manual adjustment if change is desired.")
+
+                if current_log_level != "none": print(f"Model loaded successfully from {model_path_to_load_for_retrain}.")
+                model_loaded_for_retraining = True
+            except Exception as e_load:
+                if current_log_level != "none": print(f"Retraining: Failed to load model from {model_path_to_load_for_retrain}: {e_load}. Initializing a new model.")
+                traceback.print_exc()
+                model_loaded_for_retraining = False
+        else:
+            if current_log_level != "none": print(f"Retraining: No existing model found in {log_dir} to continue from. Initializing a new model.")
+    
+    if not model_loaded_for_retraining:
+        try:
+            model = model_class(
+                "MlpPolicy" if agent_type != "RecurrentPPO" else "MlpLstmPolicy",
+                env, # Use the VecNormalize env
+                verbose=1 if current_log_level == "detailed" else 0,
+                tensorboard_log=tensorboard_log_dir, # Path to TB log parent directory
+                device=run_settings.get("device", "auto"),
+                **algo_params_for_init
+            )
+            if current_log_level != "none": print(f"\nNew {agent_type} Agent created. Total timesteps for training: {total_timesteps_for_learn}")
+        except Exception as e_model_create:
+            print(f"ERROR: Failed to create {agent_type} agent: {e_model_create}")
+            traceback.print_exc()
+            if env: env.close()
+            if eval_env_for_callback: eval_env_for_callback.close()
+            return -np.inf
+
 
     if current_log_level != "none": print(f"\n--- Starting {agent_type} Training ---")
     final_return_metric = -np.inf
@@ -355,9 +446,9 @@ def train_agent(
         checkpoint_callback = CheckpointCallback(
             save_freq=checkpoint_save_freq,
             save_path=checkpoint_save_dir,
-            name_prefix=f"{run_id}_model",
-            save_replay_buffer=True,
-            save_vecnormalize=True,
+            name_prefix=f"{run_id}_ckpt", # Changed from f"{run_id}_model" to avoid confusion with final/best
+            save_replay_buffer=True, # Important for off-policy if continuing
+            save_vecnormalize=True, # Saves VecNormalize stats with checkpoint
             verbose=1 if current_log_level == "detailed" else 0
         )
         callbacks_list.append(checkpoint_callback)
@@ -366,6 +457,8 @@ def train_agent(
     try:
         if current_log_level == "detailed":
             print(f"\nDEBUG TRAIN_AGENT: About to call model.learn() for {total_timesteps_for_learn} timesteps.")
+            print(f"DEBUG TRAIN_AGENT: model_loaded_for_retraining: {model_loaded_for_retraining}")
+            print(f"DEBUG TRAIN_AGENT: reset_num_timesteps for learn(): {not model_loaded_for_retraining}")
             print(f"DEBUG TRAIN_AGENT: Callbacks: {callbacks_list}")
             print(f"DEBUG TRAIN_AGENT: Current time: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC")
         
@@ -373,10 +466,10 @@ def train_agent(
 
         model.learn(
             total_timesteps=total_timesteps_for_learn,
-            callback=callbacks_list, # CORRECTED: Always pass the list (empty or not)
+            callback=callbacks_list if callbacks_list else None, 
             progress_bar=True if current_log_level != "none" else False,
-            tb_log_name=tb_log_name,
-            reset_num_timesteps=False
+            tb_log_name=tb_log_name, # This is the run_id, logs will be in tensorboard_log_dir/run_id/
+            reset_num_timesteps=not model_loaded_for_retraining # False if retraining
         )
 
         learn_duration = time.time() - learn_start_time
@@ -389,7 +482,7 @@ def train_agent(
         if log_to_file:
             final_model_save_path = os.path.join(log_dir, "trained_model_final.zip")
             model.save(final_model_save_path)
-            env.save(os.path.join(log_dir, "vec_normalize_final.pkl"))
+            env.save(os.path.join(log_dir, "vec_normalize.pkl")) # Standardized name
             if current_log_level != "none": print(f"Final model and VecNormalize stats saved to {log_dir}")
         
         if eval_callback and hasattr(eval_callback, 'best_mean_reward') and eval_callback.best_mean_reward is not None:
@@ -403,13 +496,13 @@ def train_agent(
         if log_to_file and model is not None and run_settings.get("save_on_interrupt", True):
             interrupted_model_path = os.path.join(log_dir, "trained_model_interrupted.zip")
             model.save(interrupted_model_path)
-            env.save(os.path.join(log_dir, "vec_normalize_interrupted.pkl"))
+            env.save(os.path.join(log_dir, "vec_normalize.pkl")) # Standardized name
             if current_log_level != "none": print(f"Interrupted model saved to {interrupted_model_path}")
-        final_return_metric = -np.inf
+        final_return_metric = -np.inf # Or some other indicator of interruption
     except Exception as e_learn:
         print(f"ERROR: An error occurred during training: {e_learn}")
         traceback.print_exc()
-        final_return_metric = -np.inf
+        final_return_metric = -np.inf # Or some other indicator of error
     finally:
         if env: env.close()
         if eval_env_for_callback: eval_env_for_callback.close()
