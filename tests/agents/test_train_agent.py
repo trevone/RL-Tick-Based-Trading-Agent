@@ -167,7 +167,7 @@ def test_train_agent_sac_setup(mock_config_dir, mock_data_loader, mock_sb3_model
 
 def test_train_agent_eval_callback_creation(mock_config_dir, mock_data_loader, mock_sb3_models):
     """Test that EvalCallback is set up and its result is returned by train_agent."""
-    with patch('stable_baselines3.common.callbacks.EvalCallback', autospec=True) as MockEvalCallback:
+    with patch('src.agents.train_agent.EvalCallback', autospec=True) as MockEvalCallback:
         mock_eval_callback_instance = MagicMock()
         mock_eval_callback_instance.best_mean_reward = 123.45 
         MockEvalCallback.return_value = mock_eval_callback_instance
