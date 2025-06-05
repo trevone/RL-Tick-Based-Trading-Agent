@@ -37,7 +37,7 @@ hash_config_keys:
   # The specific algorithm's keys used for hashing will be selected based on 'agent_type'.
   agent_params:
     PPO:
-      - total_timesteps
+      # - total_timesteps # Removed from hash
       - learning_rate
       - n_steps
       - batch_size
@@ -54,7 +54,7 @@ hash_config_keys:
       - policy_kwargs # Hash policy_kwargs as a string or a dict after eval()
 
     SAC:
-      - total_timesteps
+      # - total_timesteps # Removed from hash
       - learning_rate
       - buffer_size
       - learning_starts
@@ -69,7 +69,7 @@ hash_config_keys:
       - policy_kwargs
 
     DDPG:
-      - total_timesteps
+      # - total_timesteps # Removed from hash
       - learning_rate
       - buffer_size
       - learning_starts
@@ -82,7 +82,7 @@ hash_config_keys:
       - policy_kwargs
 
     A2C:
-      - total_timesteps
+      # - total_timesteps # Removed from hash
       - learning_rate
       - n_steps
       - gamma
@@ -94,7 +94,7 @@ hash_config_keys:
       - policy_kwargs
 
     RecurrentPPO:
-      - total_timesteps
+      # - total_timesteps # Removed from hash
       - learning_rate
       - n_steps
       - batch_size
@@ -112,8 +112,11 @@ hash_config_keys:
   binance_settings:
     - default_symbol
     - historical_interval
+    # Only include start/end dates if different data periods define different experiments
+    # These are important as they define the dataset the agent is trained on.
     - start_date_kline_data
     - end_date_kline_data
     - start_date_tick_data
     - end_date_tick_data
-    - testnet
+    - testnet # Whether it's trained on testnet data vs. mainnet data
+    # api_request_delay_seconds might not be essential for the hash itself unless it affects data quality significantly
