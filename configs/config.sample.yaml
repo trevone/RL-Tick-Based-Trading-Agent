@@ -321,17 +321,11 @@ binance_settings:
   # This prevents re-downloading data on subsequent runs.
   historical_cache_dir: "./binance_data_cache/"
 
-  # Start date for fetching historical K-line data (YYYY-MM-DD).
-  # Used for training/backtesting.
-  start_date_kline_data: "2024-01-01"
-  # End date for fetching historical K-line data (YYYY-MM-DD, inclusive).
-  end_date_kline_data: "2024-01-03"
-
-  # Start date and time for fetching historical tick data (YYYY-MM-DD HH:MM:SS).
-  # Tick data is very granular, so keep periods shorter.
-  start_date_tick_data: "2024-01-01 00:00:00"
-  # End date and time for fetching historical tick data (YYYY-MM-DD HH:MM:SS, inclusive).
-  end_date_tick_data: "2024-01-03 00:00:00"
+  # Start date and time for fetching historical training data (YYYY-MM-DD HH:MM:SS).
+  # This applies to both K-line and tick data.
+  start_date_train: "2024-01-01 00:00:00"
+  # End date and time for fetching historical training data (YYYY-MM-DD HH:MM:SS, inclusive).
+  end_date_train: "2024-01-03 23:59:59"
 
   # Your Binance API Key. It's highly recommended to use environment variables
   # (e.g., `BINANCE_API_KEY`) and set this to `null` or omit it in the config file.
@@ -389,15 +383,11 @@ binance_api_client:
 #    Date ranges for historical data used specifically during model evaluation.
 #    It's crucial to use a period *different* from your training data to assess generalization.
 evaluation_data:
-  # Start date for K-line data during evaluation (YYYY-MM-DD).
-  start_date_kline_eval: "2024-01-04"
-  # End date for K-line data during evaluation (YYYY-MM-DD, inclusive).
-  end_date_kline_eval: "2024-01-05"
-
-  # Start date and time for tick data during evaluation (YYYY-MM-DD HH:MM:SS).
-  start_date_tick_eval: "2024-01-04 00:00:00"
-  # End date and time for tick data during evaluation (YYYY-MM-DD HH:MM:SS, inclusive).
-  end_date_tick_eval: "2024-01-05 00:00:00"
+  # Start date and time for evaluation data (YYYY-MM-DD HH:MM:SS).
+  # This applies to both K-line and tick data.
+  start_date_eval: "2024-01-04 00:00:00"
+  # End date and time for evaluation data (YYYY-MM-DD HH:MM:SS, inclusive).
+  end_date_eval: "2024-01-05 23:59:59"
 
   # --- Evaluation Script Specific Parameters ---
   # Number of episodes to run during a single evaluation execution.
@@ -477,10 +467,8 @@ hash_config_keys:
     - default_symbol
     - historical_interval
     # Only include start/end dates if different data periods define different experiments
-    # - start_date_kline_data
-    # - end_date_kline_data
-    # - start_date_tick_data
-    # - end_date_tick_data
+    - start_date_train
+    - end_date_train
     - testnet # Whether it's trained on testnet data vs. mainnet data
     - api_request_delay_seconds # Could impact data completeness/quality on fetch
 

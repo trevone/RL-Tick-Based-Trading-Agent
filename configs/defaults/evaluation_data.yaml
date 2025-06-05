@@ -4,11 +4,8 @@ evaluation_data:
   # These are distinct from training data dates to test generalization.
   start_date_eval: "2024-01-04 00:00:00"             # Start date for evaluation period (YYYY-MM-DD HH:MM:SS)
   end_date_eval: "2024-01-04 23:59:59"               # End date for evaluation period (YYYY-MM-DD HH:MM:SS)
-  start_date_kline_eval: "2024-01-04 00:00:00"       # Specific start date for kline eval data
-  end_date_kline_eval: "2024-01-04 23:59:59"         # Specific end date for kline eval data
-  start_date_tick_eval: "2024-01-04 00:00:00" # Specific start datetime for tick eval data
-  end_date_tick_eval: "2024-01-04 23:59:59"   # Specific end datetime for tick eval data
 
   # Note: `n_evaluation_episodes` is now under `run_settings.n_evaluation_episodes`
   # but kept here for clarity if a separate evaluation data config might re-introduce it.
   # For now, it's defined once in run_settings.yaml
+}

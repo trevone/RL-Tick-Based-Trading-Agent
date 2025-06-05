@@ -73,11 +73,8 @@ def train_agent(
             "environment": DEFAULT_ENV_CONFIG.copy(),
             "ppo_params": {"total_timesteps": 100000, "policy_kwargs": "{'net_arch': [64, 64]}"},
             "binance_settings": {"default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": DATA_CACHE_DIR,
-                                 "start_date_kline_data": "2024-01-01 00:00:00", "end_date_kline_data": "2024-01-01 23:59:59",
-                                 "start_date_tick_data": "2024-01-01 00:00:00", "end_date_tick_data": "2024-01-01 23:59:59",
-                                 "testnet": True, "api_request_delay_seconds": 0.2},
-            "evaluation_data": {"start_date_kline_eval": "2024-01-02 00:00:00", "end_date_kline_eval": "2024-01-02 23:59:59",
-                                "start_date_tick_eval": "2024-01-02 00:00:00", "end_date_tick_eval": "2024-01-02 23:59:59"},
+                                 "start_date_train": "2024-01-01 00:00:00", "end_date_train": "2024-01-01 23:59:59"},
+            "evaluation_data": {"start_date_eval": "2024-01-02 00:00:00", "end_date_eval": "2024-01-02 23:59:59"},
             "hash_config_keys": {"environment": [], "agent_params": {"PPO": []}, "binance_settings": []}
         }
         if config_override:
@@ -132,23 +129,21 @@ def train_agent(
     print(f"Agent Type: {agent_type}")
     if log_to_file: print(f"Training logs will be saved to: {log_dir}")
 
-    train_start_date_kline = binance_settings["start_date_kline_data"]
-    train_end_date_kline = binance_settings["end_date_kline_data"]
-    train_start_date_tick = binance_settings["start_date_tick_data"]
-    train_end_date_tick = binance_settings["end_date_tick_data"]
+    train_start_date = binance_settings["start_date_train"]
+    train_end_date = binance_settings["end_date_train"]
     symbol = binance_settings["default_symbol"]
     interval = binance_settings["historical_interval"]
     kline_features = env_config["kline_price_features"]
     cache_dir = binance_settings["historical_cache_dir"]
     tick_resample_interval_ms = env_config.get("tick_resample_interval_ms")
 
-    if current_log_level != "none": print(f"\n--- Preparing K-line training data ({symbol}, {interval}, {train_start_date_kline} to {train_end_date_kline}) ---")
+    if current_log_level != "none": print(f"\n--- Preparing K-line training data ({symbol}, {interval}, {train_start_date} to {train_end_date}) ---")
     kline_df_train = pd.DataFrame()
     try:
         kline_df_train = load_kline_data_for_range(
             symbol=symbol,
-            start_date_str=train_start_date_kline,
-            end_date_str=train_end_date_kline,
+            start_date_str=train_start_date,
+            end_date_str=train_end_date,
             interval=interval,
             price_features=kline_features,
             cache_dir=cache_dir,
@@ -168,13 +163,13 @@ def train_agent(
         traceback.print_exc()
         return -np.inf
 
-    if current_log_level != "none": print(f"\n--- Preparing Tick training data ({symbol}, {train_start_date_tick} to {train_end_date_tick}) ---")
+    if current_log_level != "none": print(f"\n--- Preparing Tick training data ({symbol}, {train_start_date} to {train_end_date}) ---")
     tick_df_train = pd.DataFrame()
     try:
         tick_df_train = load_tick_data_for_range(
             symbol=symbol,
-            start_date_str=train_start_date_tick,
-            end_date_str=train_end_date_tick,
+            start_date_str=train_start_date,
+            end_date_str=train_end_date,
             cache_dir=cache_dir,
             binance_settings=binance_settings,
             tick_resample_interval_ms=tick_resample_interval_ms,
@@ -247,18 +242,16 @@ def train_agent(
 
     eval_env_for_callback = None # For EvalCallback
     if current_log_level != "none": # Only setup eval_env if not in "none" log_level (e.g. Optuna)
-        eval_start_date_kline = evaluation_data_config["start_date_kline_eval"]
-        eval_end_date_kline = evaluation_data_config["end_date_kline_eval"]
-        eval_start_date_tick = evaluation_data_config.get("start_date_tick_eval", evaluation_data_config["start_date_eval"])
-        eval_end_date_tick = evaluation_data_config.get("end_date_tick_eval", evaluation_data_config["end_date_eval"])
+        eval_start_date = evaluation_data_config["start_date_eval"]
+        eval_end_date = evaluation_data_config["end_date_eval"]
 
         kline_df_eval = pd.DataFrame()
         tick_df_eval = pd.DataFrame()
 
-        if current_log_level != "none": print(f"\n--- Preparing K-line evaluation data ({symbol}, {interval}, {eval_start_date_kline} to {eval_end_date_kline}) ---")
+        if current_log_level != "none": print(f"\n--- Preparing K-line evaluation data ({symbol}, {interval}, {eval_start_date} to {eval_end_date}) ---")
         try:
             kline_df_eval = load_kline_data_for_range(
-                symbol=symbol, start_date_str=eval_start_date_kline, end_date_str=eval_end_date_kline,
+                symbol=symbol, start_date_str=eval_start_date, end_date_str=eval_end_date,
                 interval=interval, price_features=kline_features, cache_dir=cache_dir,
                 binance_settings=binance_settings, log_level=current_log_level
             )
@@ -267,10 +260,10 @@ def train_agent(
         except Exception as e:
             if current_log_level != "none": print(f"WARNING: Eval K-line data not loaded: {e}.")
 
-        if current_log_level != "none": print(f"\n--- Preparing Tick evaluation data ({symbol}, {eval_start_date_tick} to {eval_end_date_tick}) ---")
+        if current_log_level != "none": print(f"\n--- Preparing Tick evaluation data ({symbol}, {eval_start_date} to {eval_end_date}) ---")
         try:
             tick_df_eval = load_tick_data_for_range(
-                symbol=symbol, start_date_str=eval_start_date_tick, end_date_str=eval_end_date_tick,
+                symbol=symbol, start_date_str=eval_start_date, end_date_str=eval_end_date,
                 cache_dir=cache_dir, binance_settings=binance_settings,
                 tick_resample_interval_ms=tick_resample_interval_ms, log_level=current_log_level
             )

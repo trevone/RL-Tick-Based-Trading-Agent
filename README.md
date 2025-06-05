@@ -191,7 +191,16 @@ The project uses a layered configuration system:
     # config.yaml
     agent_type: "PPO" # Choose your algorithm: PPO, SAC, DDPG, A2C, RecurrentPPO
 
-    # Example overrides (optional):
+    # === Data Period Overrides (Unified for K-line and Ticks) ===
+    binance_settings:
+      start_date_train: "2024-01-10 00:00:00"
+      end_date_train: "2024-01-20 23:59:59"
+
+    evaluation_data:
+      start_date_eval: "2024-01-21 00:00:00"
+      end_date_eval: "2024-01-22 23:59:59"
+    
+    # === Other Example Overrides (Optional) ===
     run_settings:
       model_name: "my_custom_ppo_run"
       log_level: "detailed" # Override default "normal" for more verbose output
@@ -309,8 +318,8 @@ To train your RL agent:
 
 1.  **Configure `config.yaml`**:
       * Set `agent_type` to your desired algorithm (e.g., `PPO`, `SAC`).
-      * Adjust any parameters in `environment`, `run_settings`, or the algorithm-specific sections (e.g., `ppo_params`) as desired.
-      * Set historical data ranges in `configs/defaults/binance_settings.yaml` or override them in `config.yaml`.
+      * **Set the training data period** by defining `binance_settings.start_date_train` and `binance_settings.end_date_train`.
+      * Adjust any other parameters in `environment`, `run_settings`, or the algorithm-specific sections (e.g., `ppo_params`) as desired.
       * Consider setting `environment.tick_resample_interval_ms` to a value that provides a suitable data resolution for your training goals.
 2.  **Run the training script**:
     ```bash
@@ -339,7 +348,7 @@ To find optimal hyperparameters using Optuna:
 To evaluate a trained model on unseen data:
 
 1.  **Configure `config.yaml`**:
-      * In the `evaluation_data` section, specify date ranges for evaluation data that are *different* from your training data.
+      * In the `evaluation_data` section, specify `start_date_eval` and `end_date_eval` for a period *different* from your training data.
       * In `run_settings`, set `model_path` to the path of your trained model (`.zip` file) you wish to evaluate (e.g., `logs/training/<YOUR_RUN_ID>/best_model/best_model.zip`). The script will attempt to auto-resolve if `model_path` is `null`.
       * Adjust `n_evaluation_episodes` in `configs/defaults/run_settings.yaml` (or override in `config.yaml`) as needed.
 2.  **Run the evaluation script**:

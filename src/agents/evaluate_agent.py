@@ -193,17 +193,19 @@ def main():
 
     eval_binance_settings = effective_eval_config["binance_settings"]
     eval_data_settings = effective_eval_config["evaluation_data"]
+    eval_start_date = eval_data_settings["start_date_eval"]
+    eval_end_date = eval_data_settings["end_date_eval"]
     kline_features_for_data_fetch = eval_env_config_for_instance["kline_price_features"]
     tick_resample_interval_ms = eval_env_config_for_instance.get("tick_resample_interval_ms")
 
-    if current_log_level != "none": print("\n--- Fetching and preparing K-line evaluation data ---")
+    if current_log_level != "none": print(f"\n--- Fetching and preparing K-line evaluation data from {eval_start_date} to {eval_end_date} ---")
     eval_kline_df = pd.DataFrame()
     try:
         eval_kline_df = load_kline_data_for_range(
             symbol=eval_binance_settings["default_symbol"],
             interval=eval_binance_settings["historical_interval"],
-            start_date_str=eval_data_settings["start_date_kline_eval"],
-            end_date_str=eval_data_settings["end_date_kline_eval"],
+            start_date_str=eval_start_date,
+            end_date_str=eval_end_date,
             cache_dir=DATA_CACHE_DIR,
             price_features=kline_features_for_data_fetch,
             binance_settings=eval_binance_settings,
@@ -217,13 +219,13 @@ def main():
         traceback.print_exc()
         raise
 
-    if current_log_level != "none": print(f"\n--- Fetching and preparing Tick evaluation data from {eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']} ---")
+    if current_log_level != "none": print(f"\n--- Fetching and preparing Tick evaluation data from {eval_start_date} to {eval_end_date} ---")
     eval_tick_df = pd.DataFrame()
     try:
         eval_tick_df = load_tick_data_for_range(
             symbol=eval_binance_settings["default_symbol"],
-            start_date_str=eval_data_settings["start_date_tick_eval"],
-            end_date_str=eval_data_settings["end_date_tick_eval"],
+            start_date_str=eval_start_date,
+            end_date_str=eval_end_date,
             cache_dir=DATA_CACHE_DIR,
             binance_settings=eval_binance_settings,
             tick_resample_interval_ms=tick_resample_interval_ms,
@@ -406,7 +408,7 @@ def main():
         plot_price_data_series.name = eval_binance_settings['default_symbol']
 
         plot_performance(all_combined_trade_history, plot_price_data_series, eval_run_id, eval_log_dir,
-                        title=f"Agent Evaluation: {eval_binance_settings['default_symbol']} ({eval_data_settings['start_date_tick_eval']} to {eval_data_settings['end_date_tick_eval']})",
+                        title=f"Agent Evaluation: {eval_binance_settings['default_symbol']} ({eval_start_date} to {eval_end_date})",
                         log_level=current_log_level # Pass log_level
                         )
     elif current_log_level != "none":

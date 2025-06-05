@@ -112,11 +112,9 @@ hash_config_keys:
   binance_settings:
     - default_symbol
     - historical_interval
-    # Only include start/end dates if different data periods define different experiments
     # These are important as they define the dataset the agent is trained on.
-    - start_date_kline_data
-    - end_date_kline_data
-    - start_date_tick_data
-    - end_date_tick_data
+    - start_date_train
+    - end_date_train
     - testnet # Whether it's trained on testnet data vs. mainnet data
     # api_request_delay_seconds might not be essential for the hash itself unless it affects data quality significantly
+}
