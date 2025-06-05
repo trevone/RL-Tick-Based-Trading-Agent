@@ -1,5 +1,4 @@
 # src/agents/evaluate_agent.py
-import pytest # Import pytest for the fixture if not already imported by user
 import os
 import pandas as pd
 import numpy as np
@@ -56,14 +55,6 @@ def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
     
     # Use the new load_config from src.data.utils which merges multiple files
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
-
-
-# --- Fixture to disable plotting in tests (add to your test_evaluation.py not src/agents/evaluate_agent.py) ---
-# This part belongs in tests/agents/test_evaluation.py, but I'm including it here as a reminder.
-# @pytest.fixture(autouse=True)
-# def disable_plotting_in_tests(monkeypatch):
-#     monkeypatch.setattr(plt, 'show', lambda: None)
-#     monkeypatch.setattr(plt, 'savefig', lambda *args, **kwargs: None)
 
 
 def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: str, log_dir: str, title: str = "Agent Performance"):
@@ -400,6 +391,7 @@ def main():
         print(f"Episode finished. Steps: {current_episode_step}. Reward: {episode_reward:.2f}. "
               f"Final Equity: {final_equity:.2f} Profit: {episode_profit_pct:.2f}%")
         all_episodes_profits_pct.append(episode_profit_pct)
+        all_episodes_rewards.append(episode_reward) # FIX: Append episode reward
 
         # Append current episode's trade history to the combined list
         # Access trade_history from the base SimpleTradingEnv instance

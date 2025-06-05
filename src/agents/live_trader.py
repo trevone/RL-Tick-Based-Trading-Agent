@@ -113,7 +113,12 @@ class LiveTrader:
             print(f"WARNING: VecNormalize stats not found at {self.vec_normalize_stats_path}. Live observations will NOT be normalized consistently with training. This can lead to poor performance.")
             self.vec_normalize = None # Will be initialized as new if not found
         else:
-            self.vec_normalize = VecNormalize.load(self.vec_normalize_stats_path, None) # Load only the stats, will apply to env later
+            # Create a dummy environment to load VecNormalize stats into
+            dummy_base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
+            dummy_wrapped_env = FlattenAction(dummy_base_env)
+            dummy_vec_env = DummyVecEnv([lambda: dummy_wrapped_env])
+            
+            self.vec_normalize = VecNormalize.load(self.vec_normalize_stats_path, dummy_vec_env) # Load only the stats, will apply to env later
             self.vec_normalize.training = False # Ensure it's in evaluation mode
             self.vec_normalize.norm_reward = False # Ensure reward normalization is off
             print(f"VecNormalize statistics loaded from: {self.vec_normalize_stats_path}")
@@ -171,7 +176,7 @@ class LiveTrader:
                     vec_wrapped_env, # Pass the vectorized environment
                     norm_obs=True, norm_reward=False, clip_obs=10.0
                 )
-                self.env = VecNormalize.load(self.vec_normalize_stats_path, self.env)
+                self.env = VecNormalize.load(self.vec_normalize_stats_path, self.env) # Load stats into the new instance
                 self.env.training = False # Ensure evaluation mode
                 self.env.norm_reward = False
                 self.model.set_env(self.env) # Set the new VecNormalize env to the model
@@ -376,10 +381,12 @@ class LiveTrader:
         trade_success = False
         order_response = None
         
-        # Access initial_balance from the unwrapped SimpleTradingEnv instance
-        # This is complex due to multiple wrappers: VecNormalize -> DummyVecEnv -> FlattenAction -> SimpleTradingEnv
-        base_env_instance = self.env.venv.envs[0].env # For VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv)))
-        
+        # Determine the correct base_env_instance depending on wrappers
+        if isinstance(self.env, VecNormalize):
+            base_env_instance = self.env.venv.envs[0].env.env # VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv)))
+        else:
+            base_env_instance = self.env.env # FlattenAction(SimpleTradingEnv)
+
         if not base_env_instance.position_open and action == 1: # BUY
             # Calculate amount to buy (using a fixed percentage of current balance as in env)
             cash_for_trade = base_env_instance.current_balance * base_env_instance.base_trade_amount_ratio
@@ -483,25 +490,27 @@ class LiveTrader:
         
         # Initial reset of the environment to get first observation
         try:
+            # Determine the correct base_env_instance depending on wrappers
+            if isinstance(self.env, VecNormalize):
+                base_env_instance = self.env.venv.envs[0].env.env # VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv)))
+            else:
+                base_env_instance = self.env.env # FlattenAction(SimpleTradingEnv)
+
             # We need to manually update the env's tick_df and kline_df with real data
             # since it's not a regular VecEnv that recreates itself.
-            # Base env instance can be accessed as self.env.venv.envs[0].env if VecNormalize is used.
-            # If not VecNormalize, it's self.env.env
-            if isinstance(self.env, VecNormalize):
-                base_env_instance = self.env.venv.envs[0].env
-            else: # When no VecNormalize
-                base_env_instance = self.env.env
-            
             base_env_instance.tick_df = self.historical_ticks_for_obs.copy()
             base_env_instance.kline_df_with_ta = self.current_kline_data.copy()
             
             # Reset the environment now that it has initial data
+            # Note: For live trading, we mostly just need initial observation.
+            # The 'reset' here will set current_step in SimpleTradingEnv to start_step.
             initial_obs, initial_info = self.env.reset() # This reset is crucial for env state
             self.current_obs = initial_obs
             self.env_reset_called = True
             
-            initial_balance_from_info = initial_info[0].get('current_balance') if isinstance(initial_info, list) else initial_info.get('current_balance')
-            initial_equity_from_info = initial_info[0].get('equity') if isinstance(initial_info, list) else initial_info.get('equity')
+            # initial_info from VecNormalize/DummyVecEnv reset is a list of dicts
+            initial_balance_from_info = initial_info[0].get('current_balance')
+            initial_equity_from_info = initial_info[0].get('equity')
             
             print(f"Live environment reset: Initial Balance: {initial_balance_from_info:.2f}, Initial Equity: {initial_equity_from_info:.2f}")
 
@@ -539,31 +548,26 @@ class LiveTrader:
                     self._update_kline_data_live()
                     last_kline_update_time = datetime.now(timezone.utc)
                 
-                # Update environment's internal dataframes with latest context
-                # Base env instance can be accessed as self.env.venv.envs[0].env if VecNormalize is used.
+                # Determine the correct base_env_instance depending on wrappers
                 if isinstance(self.env, VecNormalize):
-                    base_env_instance = self.env.venv.envs[0].env
+                    base_env_instance = self.env.venv.envs[0].env.env
                 else:
                     base_env_instance = self.env.env
                 
+                # Update environment's internal dataframes with latest context
                 base_env_instance.tick_df = self.historical_ticks_for_obs.copy()
                 base_env_instance.kline_df_with_ta = self.current_kline_data.copy()
 
-                # Get latest observation. Note: SimpleTradingEnv does not use current_step in live.
-                # It uses the latest data in its internal DFs.
-                # We need to make sure the _get_observation method can work without incrementing current_step
-                # or rely on it always being at the "end" of the historical data fed.
-                # For live, env.step(action) should just return new obs based on new data, not advance internal step.
-                # So we directly call env._get_observation() from the unwrapped env.
-                # However, the model expects VecEnv.step to get observation.
-                # The model also expects a reset. In live trading, we don't reset unless total ruin.
-                # The crucial part is that the agent receives a properly formatted observation.
+                # Ensure SimpleTradingEnv's current_step points to the latest tick for observation
+                # In live trading, the "current step" is always the latest available data point.
+                if not base_env_instance.tick_df.empty:
+                    base_env_instance.current_step = len(base_env_instance.tick_df) - 1 # FIX: Update current_step
+                else:
+                    if self.log_level != "none": print("WARNING: Tick data for base env is empty. Cannot update current_step.")
+                    time.sleep(tick_process_freq_seconds) # Avoid tight loop if no data
+                    continue
 
-                # SimpleTradingEnv's _get_observation uses self.current_step, which is not updated in live.
-                # We need to adapt it for live trading, where the "current step" is always the latest available data.
-                # The best approach is to pass a 'live_mode=True' to SimpleTradingEnv, which then uses current time,
-                # not self.current_step, for observation slicing.
-                
+
                 # Manually create the observation
                 raw_obs_from_env = base_env_instance._get_observation()
                 
@@ -571,11 +575,7 @@ class LiveTrader:
                     # Reshape for VecNormalize if it's a single observation (1, N)
                     if raw_obs_from_env.ndim == 1:
                         raw_obs_from_env = raw_obs_from_env[np.newaxis, :]
-                    # Use the _normalize_obs method of VecNormalize instance directly
-                    self.current_obs = self.vec_normalize._normalize_obs(raw_obs_from_env)
-                    # Squeeze back if it was originally 1D
-                    if self.current_obs.shape[0] == 1:
-                        self.current_obs = self.current_obs.squeeze(0)
+                    self.current_obs = self.vec_normalize.normalize_obs(raw_obs_from_env).squeeze(0) # FIX: Correct normalization call
                 else:
                     self.current_obs = raw_obs_from_env
 
