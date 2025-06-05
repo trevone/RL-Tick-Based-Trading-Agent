@@ -466,7 +466,7 @@ def train_agent(
 
         model.learn(
             total_timesteps=total_timesteps_for_learn,
-            callback=callbacks_list if callbacks_list else None, 
+            callback=callbacks_list,
             progress_bar=True if current_log_level != "none" else False,
             tb_log_name=tb_log_name, # This is the run_id, logs will be in tensorboard_log_dir/run_id/
             reset_num_timesteps=not model_loaded_for_retraining # False if retraining
