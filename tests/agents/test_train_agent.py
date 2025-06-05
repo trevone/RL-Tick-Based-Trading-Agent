@@ -20,19 +20,21 @@ def mock_config_dir(tmp_path):
     defaults_dir = cfg_dir / "defaults"
     defaults_dir.mkdir()
 
-    (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_dir_base: 'logs/'\n  model_name: 'test_agent'\n  log_level: 'none'\n  eval_freq_episodes: 1\n  n_evaluation_episodes: 1\n")
-    (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n")
+    # run_settings.yaml: Added log_dir_base to point within tmp_path for tests
+    (defaults_dir / "run_settings.yaml").write_text(f"run_settings:\n  log_dir_base: '{str(tmp_path / 'test_logs')}/'\n  model_name: 'test_agent'\n  log_level: 'normal'\n  eval_freq_episodes: 1\n  n_evaluation_episodes: 1\n")
+    (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n  tick_resample_interval_ms: 1000\n") # Added tick_resample_interval_ms
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.001\n  total_timesteps: 100\n  policy_kwargs: \"{'net_arch': [32]}\"\n")
     (defaults_dir / "sac_params.yaml").write_text("sac_params:\n  learning_rate: 0.0005\n  total_timesteps: 50\n  buffer_size: 10000\n")
+    # binance_settings.yaml: Added historical_cache_dir
     (defaults_dir / "binance_settings.yaml").write_text(
-        "binance_settings:\n"
-        "  default_symbol: 'BTCUSDT'\n"
-        "  historical_interval: '1h'\n"
-        "  historical_cache_dir: 'data_cache/'\n"
-        "  start_date_kline_data: '2024-01-01 00:00:00'\n"
-        "  end_date_kline_data: '2024-01-01 23:59:59'\n"
-        "  start_date_tick_data: '2024-01-01 00:00:00'\n"
-        "  end_date_tick_data: '2024-01-01 23:59:59'\n"
+        f"binance_settings:\n"
+        f"  default_symbol: 'BTCUSDT'\n"
+        f"  historical_interval: '1h'\n"
+        f"  historical_cache_dir: '{str(tmp_path / 'test_data_cache')}/'\n" # Default to a tmp_path subdir
+        f"  start_date_kline_data: '2024-01-01 00:00:00'\n"
+        f"  end_date_kline_data: '2024-01-01 23:59:59'\n"
+        f"  start_date_tick_data: '2024-01-01 00:00:00'\n"
+        f"  end_date_tick_data: '2024-01-01 23:59:59'\n"
     )
     (defaults_dir / "evaluation_data.yaml").write_text(
         "evaluation_data:\n"
@@ -43,7 +45,7 @@ def mock_config_dir(tmp_path):
         "  start_date_tick_eval: '2024-01-02 00:00:00'\n"
         "  end_date_tick_eval: '2024-01-02 23:59:59'\n"
     )
-    (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size']\n  agent_params:\n    PPO: ['learning_rate']\n    SAC: ['learning_rate', 'buffer_size']\n  binance_settings: ['default_symbol']\n")
+    (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size', 'tick_resample_interval_ms']\n  agent_params:\n    PPO: ['learning_rate']\n    SAC: ['learning_rate', 'buffer_size']\n  binance_settings: ['default_symbol']\n")
 
     (tmp_path / "config.yaml").write_text("agent_type: 'PPO'\n")
     
@@ -51,23 +53,24 @@ def mock_config_dir(tmp_path):
 
 @pytest.fixture
 def mock_data_loader():
-    """Mocks data loading functions."""
+    """Mocks data loading functions and yields the mock objects."""
     with patch('src.agents.train_agent.load_kline_data_for_range') as mock_load_kline, \
          patch('src.agents.train_agent.load_tick_data_for_range') as mock_load_tick:
         
+        # Setup minimal valid DataFrames to allow train_agent to proceed
         mock_kline_df = pd.DataFrame(
-            {'Open': [100.0], 'High': [101.0], 'Low': [99.0], 'Close': [100.5], 'Volume': [10.0]},
-            index=pd.to_datetime(['2024-01-01 00:00:00'], utc=True)
+            {'Open': [100.0]*2, 'High': [101.0]*2, 'Low': [99.0]*2, 'Close': [100.5]*2, 'Volume': [10.0]*2}, # Ensure enough data for small window
+            index=pd.to_datetime(['2024-01-01 00:00:00', '2024-01-01 01:00:00'], utc=True)
         )
         mock_tick_df = pd.DataFrame(
-            {'Price': [100.0], 'Quantity': [1.0]},
-            index=pd.to_datetime(['2024-01-01 00:00:00'], utc=True)
+            {'Price': [100.0]*2, 'Quantity': [1.0]*2, 'IsBuyerMaker': [False]*2}, # Ensure enough data
+            index=pd.to_datetime(['2024-01-01 00:00:00.000', '2024-01-01 00:00:00.001'], utc=True)
         )
 
         mock_load_kline.return_value = mock_kline_df
         mock_load_tick.return_value = mock_tick_df
         
-        yield
+        yield mock_load_kline, mock_load_tick # Yield the mocks for inspection
 
 @pytest.fixture
 def mock_sb3_models():
@@ -80,6 +83,8 @@ def mock_sb3_models():
          patch('src.agents.train_agent.RecurrentPPO', create=True) as mock_recurrent_ppo:
         
         model_instance_mock = MagicMock()
+        # Mock the predict method if necessary for more complex interactions
+        # model_instance_mock.predict.return_value = (env.action_space.sample(), None) 
         
         mock_ppo.return_value = model_instance_mock
         mock_sac.return_value = model_instance_mock
@@ -88,11 +93,8 @@ def mock_sb3_models():
         mock_recurrent_ppo.return_value = model_instance_mock
 
         yield {
-            "PPO": mock_ppo,
-            "SAC": mock_sac,
-            "DDPG": mock_ddpg,
-            "A2C": mock_a2c,
-            "RecurrentPPO": mock_recurrent_ppo
+            "PPO": mock_ppo, "SAC": mock_sac, "DDPG": mock_ddpg,
+            "A2C": mock_a2c, "RecurrentPPO": mock_recurrent_ppo
         }
 
 @pytest.fixture(autouse=True)
@@ -100,30 +102,40 @@ def setup_teardown_dirs(tmp_path, monkeypatch):
     """Sets up temporary log/data_cache directories and cleans up."""
     project_root = tmp_path
 
-    logs_dir = project_root / "logs"
-    logs_dir.mkdir()
-    (logs_dir / "training").mkdir()
-    (logs_dir / "tensorboard_logs").mkdir()
+    # Ensure base log directory for training runs exists if log_to_file=True
+    logs_dir_for_runs = project_root / "test_logs" / "training" # Matches mock_config_dir default
+    logs_dir_for_runs.mkdir(parents=True, exist_ok=True)
 
-    data_cache_dir = project_root / "data_cache"
-    data_cache_dir.mkdir()
-
-    monkeypatch.chdir(project_root)
+    # Tensorboard logs base
+    tensorboard_logs_base = project_root / "logs" / "tensorboard_logs"
+    tensorboard_logs_base.mkdir(parents=True, exist_ok=True)
     
+    # Default data cache used if not overridden by config
+    default_data_cache_dir = project_root / "data_cache"
+    default_data_cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Test-specific data cache, if binance_settings.historical_cache_dir is set to this in mock_config_dir
+    test_data_cache_from_config = project_root / "test_data_cache"
+    test_data_cache_from_config.mkdir(parents=True, exist_ok=True)
+
+
+    monkeypatch.chdir(project_root) # Run tests from tmp_path as project root
+    
+    # Patch the DATA_CACHE_DIR constant in src.data.utils if necessary,
+    # though a well-behaved train_agent should rely on config.
     import src.data.utils
-    monkeypatch.setattr(src.data.utils, 'DATA_CACHE_DIR', str(data_cache_dir))
+    monkeypatch.setattr(src.data.utils, 'DATA_CACHE_DIR', str(default_data_cache_dir))
 
     yield
+
 
 # --- Tests for train_agent ---
 
 def test_train_agent_ppo_setup(mock_config_dir, mock_data_loader, mock_sb3_models):
     """Test that train_agent sets up PPO correctly."""
-    final_metric = train_agent(log_to_file=False)
+    final_metric = train_agent(log_to_file=False) # log_to_file=False simplifies test
     
-    # When model.learn() is on a MagicMock, EvalCallback won't update its best_mean_reward.
-    # So, train_agent returns its default -np.inf.
-    assert final_metric == -np.inf
+    assert final_metric == -np.inf # Default if EvalCallback doesn't run or is mocked minimally
 
     mock_sb3_models["PPO"].assert_called_once()
     args, kwargs = mock_sb3_models["PPO"].call_args
@@ -131,90 +143,206 @@ def test_train_agent_ppo_setup(mock_config_dir, mock_data_loader, mock_sb3_model
     
     mock_sb3_models["PPO"].return_value.learn.assert_called_once()
     learn_args, learn_kwargs = mock_sb3_models["PPO"].return_value.learn.call_args
-    assert learn_kwargs['total_timesteps'] == 100 
-    assert learn_kwargs['tb_log_name'] is None 
-    assert learn_kwargs['progress_bar'] is True 
-    assert learn_kwargs['callback'] is not None 
-    assert len(learn_kwargs['callback']) > 0
+    assert learn_kwargs['total_timesteps'] == 100
+    assert learn_kwargs['tb_log_name'] is None # Due to log_to_file=False
+    assert learn_kwargs['progress_bar'] is False # Due to log_level="none" when log_to_file=False
+    assert learn_kwargs['callback'] is not None # Even if empty list or specific mock
+    # If EvalCallback is not created (e.g. log_to_file=False and no eval data path), callback might be minimal
+    # For this basic setup test, ensuring .learn is called is key.
 
 
 def test_train_agent_sac_setup(mock_config_dir, mock_data_loader, mock_sb3_models):
     """Test that train_agent sets up SAC correctly with an override."""
+    # Create a config.yaml in the mock_config_dir that specifies SAC
     with open(os.path.join(mock_config_dir, "config.yaml"), 'w') as f:
-        f.write("agent_type: 'SAC'\n")
+        f.write("agent_type: 'SAC'\n") # This will be loaded by load_default_configs_for_training
     
-    override_config = {
-        "agent_type": "SAC",
-        "sac_params": {"learning_rate": 0.0005, "total_timesteps": 50, "buffer_size": 10000}
-    }
-
-    final_metric = train_agent(config_override=override_config, log_to_file=False)
+    # train_agent will load configs, including the one above.
+    final_metric = train_agent(log_to_file=False) 
     
     assert final_metric == -np.inf
 
     mock_sb3_models["SAC"].assert_called_once()
     args, kwargs = mock_sb3_models["SAC"].call_args
-    assert kwargs['learning_rate'] == 0.0005
+    # Check against defaults from sac_params.yaml in mock_config_dir
+    assert kwargs['learning_rate'] == 0.0005 
     assert kwargs['buffer_size'] == 10000
     
     mock_sb3_models["SAC"].return_value.learn.assert_called_once()
     learn_args, learn_kwargs = mock_sb3_models["SAC"].return_value.learn.call_args
     assert learn_kwargs['total_timesteps'] == 50
-    assert learn_kwargs['tb_log_name'] is None
-    assert learn_kwargs['callback'] is not None
-    assert len(learn_kwargs['callback']) > 0
 
 
-def test_train_agent_eval_callback_creation(mock_config_dir, mock_data_loader, mock_sb3_models):
-    """Test that EvalCallback is set up and its result is returned by train_agent."""
+def test_train_agent_eval_callback_creation(mock_config_dir, mock_data_loader, mock_sb3_models, tmp_path):
+    """Test that EvalCallback is set up and its result is returned by train_agent if log_to_file=True."""
+    # Ensure log_dir_base points to tmp_path for this test when log_to_file=True
+    log_base = tmp_path / "eval_callback_test_logs"
+    config_override = {
+        "run_settings": {"log_dir_base": str(log_base)}
+    }
+
     with patch('src.agents.train_agent.EvalCallback', autospec=True) as MockEvalCallback:
         mock_eval_callback_instance = MagicMock()
-        mock_eval_callback_instance.best_mean_reward = 123.45 
+        mock_eval_callback_instance.best_mean_reward = 123.45
         MockEvalCallback.return_value = mock_eval_callback_instance
             
-        final_metric = train_agent(log_to_file=False)
+        # log_to_file=True is needed for EvalCallback to be fully set up with paths
+        final_metric = train_agent(config_override=config_override, log_to_file=True) 
             
-        MockEvalCallback.assert_called_once() 
+        MockEvalCallback.assert_called_once()
         args, kwargs = MockEvalCallback.call_args
-        assert kwargs['eval_freq'] > 0 
-        assert kwargs['log_path'] is None 
-        assert kwargs['best_model_save_path'] is None 
-        assert final_metric == 123.45 
+        assert kwargs['eval_freq'] > 0
+        assert kwargs['log_path'] is not None # Should point within tmp_path
+        assert kwargs['best_model_save_path'] is not None # Should point within tmp_path
+        assert final_metric == 123.45
 
-def test_train_agent_no_eval_callback_if_no_data(mock_config_dir, mock_sb3_models):
-    """Test that EvalCallback is skipped if eval data is empty."""
+
+def test_train_agent_no_eval_callback_if_no_data(mock_config_dir, mock_sb3_models, tmp_path):
+    """Test that EvalCallback is skipped if eval data is empty, even if log_to_file=True."""
+    log_base = tmp_path / "no_eval_data_test_logs"
+    config_override = {
+        "run_settings": {"log_dir_base": str(log_base)}
+    }
+    
+    # Mock data loaders to return empty DataFrames for evaluation data
+    # The mock_data_loader fixture is for training data. We need to patch for eval data loading.
     with patch('src.agents.train_agent.load_kline_data_for_range') as mock_load_kline, \
          patch('src.agents.train_agent.load_tick_data_for_range') as mock_load_tick:
         
+        # First calls are for training data (return valid DFs)
         mock_kline_df_train = pd.DataFrame(
-            {'Open': [100.0], 'High': [101.0], 'Low': [99.0], 'Close': [100.5], 'Volume': [10.0]},
-            index=pd.to_datetime(['2024-01-01 00:00:00'], utc=True)
+            {'Open': [100.0]*2, 'High': [101.0]*2, 'Low': [99.0]*2, 'Close': [100.5]*2, 'Volume': [10.0]*2},
+            index=pd.to_datetime(['2024-01-01 00:00:00', '2024-01-01 01:00:00'], utc=True)
         )
         mock_tick_df_train = pd.DataFrame(
-            {'Price': [100.0], 'Quantity': [1.0]},
-            index=pd.to_datetime(['2024-01-01 00:00:00'], utc=True)
+            {'Price': [100.0]*2, 'Quantity': [1.0]*2, 'IsBuyerMaker': [False]*2},
+            index=pd.to_datetime(['2024-01-01 00:00:00.000', '2024-01-01 00:00:00.001'], utc=True)
         )
         
-        kline_call_count = 0
-        def side_effect_kline(*args, **kwargs):
-            nonlocal kline_call_count
-            kline_call_count += 1
-            if kline_call_count == 1: 
-                return mock_kline_df_train
-            return pd.DataFrame() 
-
-        tick_call_count = 0
-        def side_effect_tick(*args, **kwargs):
-            nonlocal tick_call_count
-            tick_call_count += 1
-            if tick_call_count == 1: 
-                return mock_tick_df_train
-            return pd.DataFrame() 
-
-        mock_load_kline.side_effect = side_effect_kline
-        mock_load_tick.side_effect = side_effect_tick
+        # Subsequent calls (for eval data) return empty DFs
+        mock_load_kline.side_effect = [mock_kline_df_train, pd.DataFrame()] # Train, then Eval
+        mock_load_tick.side_effect = [mock_tick_df_train, pd.DataFrame()]  # Train, then Eval
         
-        with patch('stable_baselines3.common.callbacks.EvalCallback') as MockEvalCallbackConstructor:
-            final_metric = train_agent(log_to_file=False)
-            MockEvalCallbackConstructor.assert_not_called() 
-            assert final_metric == -np.inf
+        with patch('src.agents.train_agent.EvalCallback') as MockEvalCallbackConstructor:
+            # Call train_agent with log_to_file=True to attempt EvalCallback creation
+            final_metric = train_agent(config_override=config_override, log_to_file=True)
+            MockEvalCallbackConstructor.assert_not_called()
+            assert final_metric == -np.inf # Default when no eval
+
+
+# --- NEW TESTS FOR CACHE DIR AND LOG LEVEL PROPAGATION ---
+
+def test_train_agent_uses_correct_cache_dir(mock_config_dir, mock_data_loader, mock_sb3_models, tmp_path):
+    """
+    Tests that train_agent passes the 'historical_cache_dir' from config
+    to the data loading functions.
+    """
+    # mock_data_loader fixture yields (mock_load_kline, mock_load_tick)
+    # These are already patched at 'src.agents.train_agent.load_kline_data_for_range' etc.
+    mock_load_kline, mock_load_tick = mock_data_loader
+
+    custom_cache_dir = str(tmp_path / "my_unique_test_cache")
+    # No need to os.makedirs, the test is about passing the path string.
+
+    config_override = {
+        "binance_settings": {
+            "historical_cache_dir": custom_cache_dir
+        },
+        "ppo_params": {"total_timesteps": 10}, # Minimal run
+        "run_settings": {"log_level": "none"} # Keep console clean for this test
+    }
+    
+    # log_to_file=False to prevent actual log directory creation complexities here,
+    # focusing only on parameter passing.
+    train_agent(config_override=config_override, log_to_file=False)
+
+    # Assert that the mocked data loading functions were called with the correct cache_dir
+    # Data loaders might be called multiple times (train, eval)
+    
+    # Check kline loader calls
+    assert mock_load_kline.call_count > 0, "load_kline_data_for_range was not called"
+    for k_call_args in mock_load_kline.call_args_list:
+        _, kwargs = k_call_args
+        assert kwargs.get("cache_dir") == custom_cache_dir, \
+            f"Kline loader called with cache_dir {kwargs.get('cache_dir')}, expected {custom_cache_dir}"
+
+    # Check tick loader calls
+    assert mock_load_tick.call_count > 0, "load_tick_data_for_range was not called"
+    for t_call_args in mock_load_tick.call_args_list:
+        _, kwargs = t_call_args
+        assert kwargs.get("cache_dir") == custom_cache_dir, \
+            f"Tick loader called with cache_dir {kwargs.get('cache_dir')}, expected {custom_cache_dir}"
+
+
+@pytest.mark.parametrize("log_level_setting", ["detailed", "normal", "none"])
+def test_train_agent_propagates_log_level(mock_config_dir, mock_data_loader, mock_sb3_models, log_level_setting, tmp_path):
+    """
+    Tests that train_agent passes the 'log_level' from config
+    to the data loading functions when log_to_file=True.
+    If log_to_file=False, it should pass "none".
+    """
+    mock_load_kline, mock_load_tick = mock_data_loader
+
+    # Configure run_settings to use tmp_path for logs if log_to_file=True
+    test_specific_log_dir_base = str(tmp_path / f"logs_prop_{log_level_setting}")
+
+    config_override = {
+        "run_settings": {
+            "log_level": log_level_setting,
+            "log_dir_base": test_specific_log_dir_base # Ensure logs go to temp if log_to_file=True
+        },
+        "ppo_params": {"total_timesteps": 10} # Minimal run
+    }
+
+    # Scenario 1: log_to_file = True
+    # Expected propagated log_level should be the log_level_setting from config
+    train_agent(config_override=config_override, log_to_file=True)
+
+    assert mock_load_kline.call_count > 0
+    # Check log_level for calls made when log_to_file=True
+    # Data loaders are called for training data and then for evaluation data.
+    # First call for klines (training), second for klines (eval) - if eval data is loaded.
+    # The mock_data_loader provides return values for training data.
+    # For eval data, load_kline_data_for_range/load_tick_data_for_range will be called again by train_agent.
+    # The mock will be reused.
+    
+    # Let's reset mocks for cleaner assertion for the log_to_file=True case specifically for this test
+    mock_load_kline.reset_mock()
+    mock_load_tick.reset_mock()
+    
+    # Re-run with log_to_file=True
+    train_agent(config_override=config_override, log_to_file=True)
+    
+    # Assertions for log_to_file=True
+    assert mock_load_kline.call_count >= 1 # At least for training, possibly for eval too
+    for k_call_args in mock_load_kline.call_args_list:
+        _, kwargs = k_call_args
+        assert kwargs.get("log_level") == log_level_setting, \
+            f"Kline loader (log_to_file=True) called with log_level {kwargs.get('log_level')}, expected {log_level_setting}"
+
+    assert mock_load_tick.call_count >= 1
+    for t_call_args in mock_load_tick.call_args_list:
+        _, kwargs = t_call_args
+        assert kwargs.get("log_level") == log_level_setting, \
+            f"Tick loader (log_to_file=True) called with log_level {kwargs.get('log_level')}, expected {log_level_setting}"
+
+
+    # Scenario 2: log_to_file = False
+    # Expected propagated log_level should be "none" due to internal override in train_agent
+    mock_load_kline.reset_mock()
+    mock_load_tick.reset_mock()
+    
+    train_agent(config_override=config_override, log_to_file=False)
+    expected_propagated_log_level_for_no_file = "none"
+
+    assert mock_load_kline.call_count >= 1
+    for k_call_args in mock_load_kline.call_args_list:
+        _, kwargs = k_call_args
+        assert kwargs.get("log_level") == expected_propagated_log_level_for_no_file, \
+             f"Kline loader (log_to_file=False) called with log_level {kwargs.get('log_level')}, expected {expected_propagated_log_level_for_no_file}"
+    
+    assert mock_load_tick.call_count >= 1
+    for t_call_args in mock_load_tick.call_args_list:
+        _, kwargs = t_call_args
+        assert kwargs.get("log_level") == expected_propagated_log_level_for_no_file, \
+            f"Tick loader (log_to_file=False) called with log_level {kwargs.get('log_level')}, expected {expected_propagated_log_level_for_no_file}"

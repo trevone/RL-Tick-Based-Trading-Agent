@@ -152,7 +152,7 @@ def train_agent(
             price_features=kline_features,
             cache_dir=cache_dir,
             binance_settings=binance_settings,
-            log_level=current_log_level # CORRECTED: Pass current_log_level
+            log_level=current_log_level
         )
         if current_log_level == "detailed":
             print(f"\nDEBUG TRAIN_AGENT: kline_df_train - Actual shape: {kline_df_train.shape}")
@@ -177,7 +177,7 @@ def train_agent(
             cache_dir=cache_dir,
             binance_settings=binance_settings,
             tick_resample_interval_ms=tick_resample_interval_ms,
-            log_level=current_log_level # CORRECTED: Pass current_log_level
+            log_level=current_log_level
         )
         if current_log_level == "detailed":
             print(f"\nDEBUG TRAIN_AGENT: tick_df_train - Actual shape: {tick_df_train.shape}")
@@ -234,7 +234,7 @@ def train_agent(
             kline_df_eval = load_kline_data_for_range(
                 symbol=symbol, start_date_str=eval_start_date_kline, end_date_str=eval_end_date_kline,
                 interval=interval, price_features=kline_features, cache_dir=cache_dir,
-                binance_settings=binance_settings, log_level=current_log_level # CORRECTED
+                binance_settings=binance_settings, log_level=current_log_level
             )
             if current_log_level == "detailed": print(f"DEBUG TRAIN_AGENT: kline_df_eval - Shape: {kline_df_eval.shape}")
             if kline_df_eval.empty and current_log_level != "none": print("WARNING: Eval K-line data empty.")
@@ -246,7 +246,7 @@ def train_agent(
             tick_df_eval = load_tick_data_for_range(
                 symbol=symbol, start_date_str=eval_start_date_tick, end_date_str=eval_end_date_tick,
                 cache_dir=cache_dir, binance_settings=binance_settings,
-                tick_resample_interval_ms=tick_resample_interval_ms, log_level=current_log_level # CORRECTED
+                tick_resample_interval_ms=tick_resample_interval_ms, log_level=current_log_level
             )
             if current_log_level == "detailed": print(f"DEBUG TRAIN_AGENT: tick_df_eval - Shape: {tick_df_eval.shape}")
             if tick_df_eval.empty and current_log_level != "none": print("WARNING: Eval Tick data empty.")
@@ -373,7 +373,7 @@ def train_agent(
 
         model.learn(
             total_timesteps=total_timesteps_for_learn,
-            callback=callbacks_list if callbacks_list else None,
+            callback=callbacks_list, # CORRECTED: Always pass the list (empty or not)
             progress_bar=True if current_log_level != "none" else False,
             tb_log_name=tb_log_name,
             reset_num_timesteps=False
