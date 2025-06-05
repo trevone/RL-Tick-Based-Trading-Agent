@@ -7,6 +7,10 @@ import numpy as np
 # Import the wrapper from the new path
 from src.environments.custom_wrappers import FlattenAction
 
+# Apply pytest-order marker
+pytestmark = pytest.mark.order(4) #
+
+
 # Mock a simple environment with a Tuple action space
 class MockEnv(gym.Env):
     def __init__(self):

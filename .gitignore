@@ -8,3 +8,7 @@ klines.txt
 train_output.txt
 pytest.txt
 data_cache/
+test_base_env.txt
+.gitignore
+test_data_integrity.txt
+test_utils.txt

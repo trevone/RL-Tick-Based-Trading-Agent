@@ -27,7 +27,8 @@ def mock_config_dir(tmp_path):
 
     # Minimal default configs for testing evaluate_agent
     (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_dir_base: 'logs/'\n  model_name: 'test_agent'\n  log_level: 'none'\n  eval_log_dir: 'logs/evaluation/'\n  model_path: 'logs/training/mock_hash_test_agent/best_model/best_model.zip'\n")
-    (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n  initial_balance: 10000.0\n")
+    # MODIFIED: Added tick_resample_interval_ms to environment.yaml mock
+    (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price']\n  initial_balance: 10000.0\n  tick_resample_interval_ms: 60000\n")
     (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  default_symbol: 'BTCUSDT'\n  historical_interval: '1h'\n  historical_cache_dir: 'data_cache/'\n")
     
     # Corrected evaluation_data.yaml content for the mock with full datetime strings
@@ -41,7 +42,8 @@ evaluation_data:
   end_date_tick_eval: '2024-01-01 23:59:59' 
   n_evaluation_episodes: 1
 """)
-    (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size']\n  agent_params:\n    PPO: ['learning_rate']\n  binance_settings: ['default_symbol']\n")
+    # MODIFIED: Added tick_resample_interval_ms to hash_keys.yaml mock
+    (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size', 'tick_resample_interval_ms']\n  agent_params:\n    PPO: ['learning_rate']\n  binance_settings: ['default_symbol']\n")
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.0003\n") # Minimal PPO params for hashing
 
     # Create dummy main config.yaml in the root tmp_path
