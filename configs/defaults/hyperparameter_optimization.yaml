@@ -1,0 +1,109 @@
+# configs/defaults/hyperparameter_optimization.yaml
+# Settings for Optuna hyperparameter optimization
+hyperparameter_optimization:
+  study_name: "tick_trading_agent_optimization" # Name of the Optuna study
+  db_file: "optuna_study.db"                   # SQLite database file for the study results
+  load_if_exists: True                        # Load existing study if it exists
+  direction: "maximize"                       # Direction of optimization: "maximize" or "minimize"
+  n_trials: 50                                # Total number of trials to run
+  timeout_seconds: null                       # Timeout for the optimization process in seconds (null for no timeout)
+
+  # Sampler configuration
+  sampler_type: "TPESampler"                  # "TPESampler" or "RandomSampler"
+  seed: 42                                    # Random seed for reproducibility
+
+  # Pruner configuration (to stop unpromising trials early)
+  use_pruner: True                            # Enable or disable pruning
+  pruner_n_startup_trials: 5                  # Number of trials before pruning is applied
+  pruner_n_warmup_steps: 0                    # Number of steps before pruning is applied within a trial
+  pruner_interval_steps: 1                    # Interval in steps of the objective function to apply pruning
+
+  # Total timesteps for each individual training trial during optimization.
+  # This is often set lower than the full training total_timesteps to speed up HPO.
+  trial_total_timesteps: 1000000
+
+  # Define hyperparameter search spaces for different agent types.
+  # The keys here should match the 'agent_type' in your main config.yaml.
+  ppo_optim_params:
+    learning_rate:
+      low: 0.00001
+      high: 0.001
+      log: True                               # Use log scale for sampling
+    n_steps:
+      choices: [256, 512, 1024, 2048]
+    gamma:
+      low: 0.9
+      high: 0.999
+    policy_kwargs_net_arch:
+      choices: ["[32, 32]", "[64, 64]", "[128, 128]"] # Network architecture as string to be eval'd
+
+  sac_optim_params:
+    learning_rate:
+      low: 0.00001
+      high: 0.001
+      log: True
+    buffer_size:
+      choices: [100000, 500000, 1000000]
+    gamma:
+      low: 0.9
+      high: 0.999
+    tau:
+      low: 0.001
+      high: 0.01
+    gradient_steps:
+      choices: [1, -1] # -1 means as many as possible
+    policy_kwargs_net_arch:
+      choices: ["[128, 128]", "[256, 256]"]
+
+  ddpg_optim_params:
+    learning_rate:
+      low: 0.00005
+      high: 0.0005
+      log: True
+    buffer_size:
+      choices: [100000, 500000]
+    gamma:
+      low: 0.9
+      high: 0.999
+    tau:
+      low: 0.001
+      high: 0.01
+    batch_size:
+      choices: [128, 256]
+
+  a2c_optim_params:
+    learning_rate:
+      low: 0.0001
+      high: 0.001
+      log: True
+    n_steps:
+      choices: [5, 10, 20]
+    gamma:
+      low: 0.9
+      high: 0.99
+    ent_coef:
+      low: 0.0
+      high: 0.1
+
+  recurrent_ppo_optim_params:
+    learning_rate:
+      low: 0.00001
+      high: 0.001
+      log: True
+    n_steps:
+      choices: [512, 1024, 2048]
+    gamma:
+      low: 0.9
+      high: 0.999
+    policy_kwargs_lstm_layers:
+      choices: [1, 2] # Number of LSTM layers
+    policy_kwargs_lstm_hidden_size:
+      choices: [64, 128, 256] # LSTM hidden size
+
+  # Environment parameters to optimize (optional)
+  env_optim_params:
+    kline_window_size:
+      choices: [10, 20, 30]
+    tick_feature_window_size:
+      choices: [20, 50, 100]
+    # Other env parameters could be added here

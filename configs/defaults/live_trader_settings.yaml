@@ -1,0 +1,26 @@
+# configs/defaults/live_trader_settings.yaml
+# Settings specific to the live_trader.py script
+live_trader_settings:
+  # How often (in seconds) the live trader's main loop processes new buffered ticks,
+  # generates an observation, and allows the agent to take an action.
+  # For very high-frequency tick data, adjust carefully.
+  tick_process_freq_seconds: 1.0
+
+  # How often (in minutes) the K-line data for observation context is refreshed
+  # from the Binance API. Should be less than or equal to the K-line interval.
+  kline_update_freq_minutes: 10
+
+  # Minimum cooldown (in seconds) between consecutive agent actions (Buy/Sell).
+  # Prevents rapid, potentially erroneous, trade signals.
+  action_cooldown_seconds: 5
+
+  # Whether to use deterministic actions (True) or stochastic actions (False)
+  # during live trading prediction by the agent.
+  deterministic_prediction: True
+
+  # Add more live trading specific settings here as needed, e.g.:
+  # max_position_size_ratio: 0.5 # Max proportion of balance to commit to a position
+  # stop_loss_pct: 0.02          # Automatically trigger stop loss if PnL drops below this %
+  # trailing_stop_pct: 0.01      # Trailing stop loss percentage
+  # order_timeout_seconds: 30    # How long to wait for a limit order to fill before cancelling
+  # re_entry_cooldown_minutes: 5 # Cooldown period after closing a position before opening a new one
