@@ -20,3 +20,4 @@ optuna_studies/
 optuna/
 optuna/optuna_study.db
 todo.md
+evaluate.txt

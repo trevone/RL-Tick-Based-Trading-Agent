@@ -39,7 +39,7 @@ environment:
 
   # Continuous Profit Target action parameter ranges (for the Box action space)
   min_profit_target_low: 0.001         # e.g., 0.1% of entry price
-  min_profit_target_high: 0.05         # e.g., 5% of entry price
+  min_profit_target_high: 0.01         # e.g., 5% of entry price
 
   # Reward and Penalty settings (Adjust carefully for tick-level actions)
   reward_open_buy_position: 0.001
