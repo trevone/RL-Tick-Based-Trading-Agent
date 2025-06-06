@@ -1,9 +1,9 @@
 # configs/defaults/hyperparameter_optimization.yaml
 # Settings for Optuna hyperparameter optimization
 hyperparameter_optimization:
-  study_name: "tick_trading_agent_optimization" # Name of the Optuna study
-  optuna_studies_dir: "optuna_studies"           # Directory for study results and logs
-  db_file: "optuna_study.db"                   # SQLite database file for the study results
+  study_name: "default_optimization"          # Name of the Optuna study
+  optuna_studies_dir: "optuna"                # Directory for study results and logs
+  db_file: "study.db"                         # SQLite database file for the study results
   load_if_exists: True                        # Load existing study if it exists
   direction: "maximize"                       # Direction of optimization: "maximize" or "minimize"
   n_trials: 50                                # Total number of trials to run
