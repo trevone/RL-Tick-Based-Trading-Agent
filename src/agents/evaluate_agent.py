@@ -23,6 +23,7 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
 
 # --- UPDATED IMPORTS ---
+from src.environments.base_env import DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
 from src.data.config_loader import load_config, merge_configs, convert_to_native_types
 from src.data.data_loader import load_tick_data_for_range, load_kline_data_for_range
@@ -47,7 +48,6 @@ def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
 
 
 def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: str, log_dir: str, log_level: str = "normal", title: str = "Agent Performance"):
-    # ... (rest of the function remains unchanged)
     if not trade_history:
         if log_level != "none":
             print("No trade history to plot.")
@@ -279,7 +279,6 @@ def main():
         if env_for_model: env_for_model.close()
         return
     
-    # ... (rest of the main function remains unchanged)
     num_eval_episodes = run_settings.get('n_evaluation_episodes', 3)
     if current_log_level != "none": print(f"Starting evaluation for {num_eval_episodes} episodes...")
     all_episodes_rewards, all_episodes_profits_pct = [], []
@@ -298,7 +297,7 @@ def main():
                 monitor_env = env_for_model.venv.envs[0]
                 if hasattr(monitor_env, 'env') and isinstance(monitor_env.env, FlattenAction):
                     flatten_action_env = monitor_env.env
-                    if hasattr(flatten_action_env, 'env'): # Check if it has the final env attribute
+                    if hasattr(flatten_action_env, 'env'):
                          actual_base_env = flatten_action_env.env
         except AttributeError:
             if current_log_level != "none":

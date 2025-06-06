@@ -26,13 +26,14 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
+# --- Corrected Imports ---
+from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
-# --- UPDATED IMPORTS ---
+from src.environments.env_loader import load_environments
 from src.data.config_loader import load_config, merge_configs, get_relevant_config_for_hash, generate_config_hash, convert_to_native_types
 from src.data.data_loader import load_tick_data_for_range, load_kline_data_for_range
 from src.data.path_manager import DATA_CACHE_DIR
-from src.environments.env_loader import load_environments # <-- IMPORT THE NEW LOADER
-# --- END UPDATED IMPORTS ---
+# --- End Corrected Imports ---
 
 
 def load_default_configs_for_training(config_dir="configs/defaults") -> dict:
@@ -88,10 +89,7 @@ def train_agent(
     agent_type = effective_config.get("agent_type", "PPO")
     algo_params = effective_config.get(f"{agent_type.lower()}_params", {})
 
-    # --- NEW: Get the environment type from config ---
-    env_type = run_settings.get("env_type", "simple") # Default to "simple"
-
-    # --- NEW: Dynamically load all available environments ---
+    env_type = run_settings.get("env_type", "simple")
     available_envs = load_environments()
 
     current_log_level = run_settings.get("log_level", "normal")
@@ -102,8 +100,8 @@ def train_agent(
     env_config["custom_print_render"] = "none" if current_log_level == "none" else env_config.get("custom_print_render", "none")
 
     run_id = "optuna_trial"
-    log_dir = "./optuna_temp_logs" # Default for Optuna if log_to_file is False
-    model_save_dir = log_dir # For EvalCallback, best_model_save_path
+    log_dir = "./optuna_temp_logs"
+    model_save_dir = log_dir
 
     if log_to_file:
         relevant_config_for_hash = get_relevant_config_for_hash(effective_config)
@@ -117,7 +115,7 @@ def train_agent(
             log_dir_base_for_training_runs = log_dir_base
 
         log_dir = os.path.join(log_dir_base_for_training_runs, run_id)
-        model_save_dir = os.path.join(log_dir, "best_model") # For EvalCallback best model
+        model_save_dir = os.path.join(log_dir, "best_model")
 
         os.makedirs(log_dir, exist_ok=True)
         os.makedirs(model_save_dir, exist_ok=True)
@@ -129,13 +127,12 @@ def train_agent(
             print(f"Warning: Could not save effective_train_config.json: {e_json}")
 
     tensorboard_log_dir = os.path.join("logs", "tensorboard_logs") if log_to_file else None
-    tb_log_name = run_id if log_to_file else None # tb_log_name is just the run_id for subfolder in tensorboard_log_dir
+    tb_log_name = run_id if log_to_file else None
 
     print(f"Training run ID: {run_id} (Log Level: {current_log_level})")
     print(f"Agent Type: {agent_type}")
     if log_to_file: print(f"Training logs will be saved to: {log_dir}")
 
-    # Get data parameters from the centralized run_settings
     start_date_train = run_settings["start_date_train"]
     end_date_train = run_settings["end_date_train"]
     symbol = run_settings["default_symbol"]
@@ -195,21 +192,16 @@ def train_agent(
         traceback.print_exc()
         return -np.inf
 
-    # Create the base vectorized environment (non-normalized)
     vec_env_for_norm = None
     try:
         def create_env_fn(tick_data: pd.DataFrame, kline_data: pd.DataFrame, env_config_dict: dict, monitor_filepath: str = None):
             def _init_env():
-                
-                # --- NEW: Look up the environment class from our dictionary ---
                 env_class = available_envs.get(env_type)
-
                 if env_class is None:
                     raise ValueError(
                         f"Environment type '{env_type}' not found. "
                         f"Available environments are: {list(available_envs.keys())}"
                     )
-                
                 print(f">>> Using Environment: {env_class.__name__} (type: '{env_type}') <<<")
                 
                 base_env = env_class(tick_df=tick_data.copy(), kline_df_with_ta=kline_data.copy(), config=env_config_dict)
@@ -223,7 +215,7 @@ def train_agent(
 
         vec_env_for_norm = make_vec_env(
             create_env_fn(tick_df_train, kline_df_train, current_env_config_for_train, train_monitor_path),
-            n_envs=1, # For now, assuming n_envs=1 for simplicity with VecNormalize loading
+            n_envs=1,
             seed=np.random.randint(0, 10000)
         )
     except Exception as e:
@@ -232,7 +224,6 @@ def train_agent(
         if vec_env_for_norm: vec_env_for_norm.close()
         return -np.inf
 
-    # Initialize or load VecNormalize
     env = None
     current_run_vec_normalize_path = os.path.join(log_dir, "vec_normalize.pkl")
 
@@ -256,7 +247,6 @@ def train_agent(
         env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
 
     if current_log_level != "none": print(f"\nTraining Environment (VecNormalize) created: Obs Space {env.observation_space.shape}, Act Space {env.action_space.shape}")
-
 
     eval_env_for_callback = None
     if current_log_level != "none":
@@ -436,7 +426,6 @@ def train_agent(
             if env: env.close()
             if eval_env_for_callback: eval_env_for_callback.close()
             return -np.inf
-
 
     if current_log_level != "none": print(f"\n--- Starting {agent_type} Training ---")
     final_return_metric = -np.inf

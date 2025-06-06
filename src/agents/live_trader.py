@@ -69,15 +69,14 @@ class LiveTrader:
         self.env_config = self.effective_config["environment"]
         self.binance_settings = self.effective_config["binance_settings"]
         self.live_trader_settings = self.effective_config.get("live_trader_settings", {})
-
         self.agent_type = self.effective_config.get("agent_type", "PPO")
-
+        
         # --- NEW: Get env_type and load available environments ---
         self.env_type = self.run_settings.get("env_type", "simple")
-        self.available_envs = load_environments()
-        self.env_class = self.available_envs.get(self.env_type)
+        available_envs = load_environments()
+        self.env_class = available_envs.get(self.env_type)
         if self.env_class is None:
-            raise ValueError(f"Environment type '{self.env_type}' not found. Available: {list(self.available_envs.keys())}")
+            raise ValueError(f"Environment type '{self.env_type}' not found. Available: {list(available_envs.keys())}")
         print(f">>> Live Trader using Environment: {self.env_class.__name__} (type: '{self.env_type}') <<<")
         # --- END NEW ---
 
@@ -155,26 +154,22 @@ class LiveTrader:
 
             # Set the VecNormalize environment to the model after loading its stats if available
             if self.vec_normalize:
-                # Re-wrap the base environment with VecNormalize, passing the loaded stats
-                # This creates a new VecNormalize instance with the loaded stats
                 base_env = self.env_class(pd.DataFrame(), pd.DataFrame(), self.env_config)
                 wrapped_env = FlattenAction(base_env)
-                vec_wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Wrap in DummyVecEnv
+                vec_wrapped_env = DummyVecEnv([lambda: wrapped_env])
                 
                 self.env = VecNormalize(
-                    vec_wrapped_env, # Pass the vectorized environment
+                    vec_wrapped_env,
                     norm_obs=True, norm_reward=False, clip_obs=10.0
                 )
-                self.env = VecNormalize.load(self.vec_normalize_stats_path, self.env) # Load stats into the new instance
-                self.env.training = False # Ensure evaluation mode
+                self.env = VecNormalize.load(self.vec_normalize_stats_path, self.env)
+                self.env.training = False
                 self.env.norm_reward = False
-                self.model.set_env(self.env) # Set the new VecNormalize env to the model
+                self.model.set_env(self.env)
                 print("Model env set with loaded VecNormalize.")
             else:
-                # If no VecNormalize stats were loaded, create a simple non-normalized env
                 base_env = self.env_class(pd.DataFrame(), pd.DataFrame(), self.env_config)
-                self.env = FlattenAction(base_env) # Just the FlattenAction wrapper
-                # For live trading without VecNormalize, it's ok for the model to use the raw env
+                self.env = FlattenAction(base_env)
                 self.model.set_env(self.env)
                 print("Model env set (no VecNormalize applied).")
 
@@ -344,7 +339,7 @@ class LiveTrader:
         order_response = None
         
         if isinstance(self.env, VecNormalize):
-            base_env_instance = self.env.venv.envs[0].env.env.env
+            base_env_instance = self.env.venv.envs[0].env.env
         else:
             base_env_instance = self.env.env
 
