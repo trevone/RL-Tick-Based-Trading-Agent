@@ -21,8 +21,9 @@ def mock_hpo_config_dir(tmp_path, monkeypatch):
     defaults_dir = config_root / "configs" / "defaults"
     defaults_dir.mkdir(parents=True)
 
-    (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_level: 'none'\n")
-    (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  historical_cache_dir: 'test_cache/'\n")
+    # FIXED: Moved historical_cache_dir to run_settings.yaml
+    (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_level: 'none'\n  historical_cache_dir: 'test_cache/'\n")
+    (defaults_dir / "binance_settings.yaml").write_text("binance_settings: {}\n") # Now empty of this key
     (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 20\n  tick_feature_window_size: 50\n")
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.0003\n  n_steps: 2048\n  total_timesteps: 10000\n  policy_kwargs: \"{'net_arch': [64, 64]}\"\n")
     (defaults_dir / "sac_params.yaml").write_text("sac_params:\n  learning_rate: 0.0003\n  buffer_size: 100000\n  total_timesteps: 10000\n  policy_kwargs: \"{'net_arch': [256, 256]}\"\n  gamma: 0.99\n  tau: 0.005\n  gradient_steps: 1\n")

@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from unittest.mock import patch, MagicMock, call, mock_open
 from datetime import datetime, timezone, date
-import shutil 
+import shutil
 
 # Import the module to be tested and its dependencies
 from src.data.data_downloader_manager import (
@@ -15,9 +15,7 @@ from src.data.data_downloader_manager import (
     _log_deletion_event,
     LOG_DIR_BASE_NAME,
     DATA_MANAGEMENT_LOG_FILENAME,
-    # load_configs_for_data_management # Will be patched
 )
-# No longer need UTILS_DATA_CACHE_DIR directly for these tests' core logic regarding cache_dir
 
 def create_dummy_df(columns=['Price', 'Quantity', 'IsBuyerMaker'], num_rows=5, all_zero=False):
     if all_zero:
@@ -26,14 +24,11 @@ def create_dummy_df(columns=['Price', 'Quantity', 'IsBuyerMaker'], num_rows=5, a
 
 @pytest.fixture
 def mock_tmp_path_for_downloader(tmp_path, monkeypatch):
-    project_root = tmp_path / "project_root_downloader" 
+    project_root = tmp_path / "project_root_downloader"
     project_root.mkdir(exist_ok=True)
-    # The actual cache dir path will now come from the mocked config.
-    # No need to create a 'data_cache' subdir here explicitly for the tests using mocked config.
     monkeypatch.setattr('src.data.data_downloader_manager._get_project_root', lambda: str(project_root))
     return project_root
 
-# NEW Fixture for mock configuration for data downloader
 @pytest.fixture
 def mock_downloader_configs_fixture(tmp_path, monkeypatch):
     """
@@ -43,34 +38,30 @@ def mock_downloader_configs_fixture(tmp_path, monkeypatch):
     """
     config_root_for_test = tmp_path / "downloader_test_configs"
     config_root_for_test.mkdir()
-    
+
     defaults_dir = config_root_for_test / "configs" / "defaults"
     defaults_dir.mkdir(parents=True)
 
-    # Define the cache directory path that the mocked config will point to
     test_cache_dir_via_config = str(tmp_path / "test_downloader_cache_from_config")
-    os.makedirs(test_cache_dir_via_config, exist_ok=True) # Ensure this test cache dir exists
+    os.makedirs(test_cache_dir_via_config, exist_ok=True)
 
-    # Create dummy binance_settings.yaml specifying this cache dir
-    (defaults_dir / "binance_settings.yaml").write_text(
-        f"binance_settings:\n  historical_cache_dir: '{test_cache_dir_via_config}'\n"
-        "  api_key: \"mock_api_key\"\n  api_secret: \"mock_api_secret\"\n  testnet: true\n  api_request_delay_seconds: 0.001\n"
+    # UPDATED: historical_cache_dir is now in run_settings.yaml
+    (defaults_dir / "run_settings.yaml").write_text(
+        f"run_settings:\n  historical_cache_dir: '{test_cache_dir_via_config}'\n  log_level: 'none'\n"
     )
-    # Create dummy run_settings.yaml (optional, but good for completeness if load_configs_for_data_management uses it)
-    (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_level: 'none'\n")
-    # Create an empty main config.yaml in the root of this temp config structure
+    (defaults_dir / "binance_settings.yaml").write_text(
+        "binance_settings:\n  api_key: \"mock_api_key\"\n  api_secret: \"mock_api_secret\"\n  testnet: true\n  api_request_delay_seconds: 0.001\n"
+    )
     (config_root_for_test / "config.yaml").write_text("# Main config for downloader tests (can be empty to use defaults)\n")
 
     original_cwd = os.getcwd()
-    monkeypatch.chdir(config_root_for_test) # Change CWD so load_config finds these files
+    monkeypatch.chdir(config_root_for_test)
     
-    yield test_cache_dir_via_config # The test will use this path for its assertions
+    yield test_cache_dir_via_config
 
-    monkeypatch.chdir(original_cwd) # Restore CWD
-    # tmp_path should handle cleanup of config_root_for_test and test_downloader_cache_from_config
+    monkeypatch.chdir(original_cwd)
 
 class TestLoggingHelpers:
-    # These tests don't depend on the new config loading, so they remain as is.
     def test_ensure_log_file_path_creates_dir_and_returns_path(self, mock_tmp_path_for_downloader):
         project_root = mock_tmp_path_for_downloader
         expected_log_dir = project_root / LOG_DIR_BASE_NAME
@@ -103,8 +94,7 @@ class TestLoggingHelpers:
         assert "Index is not UTC-aware." in content
 
 
-# Patch load_configs_for_data_management for the test classes
-@patch('src.data.data_downloader_manager.load_configs_for_data_management') 
+@patch('src.data.data_downloader_manager.load_configs_for_data_management')
 @patch('src.data.data_downloader_manager._log_deletion_event')
 @patch('src.data.data_downloader_manager.os.path.exists')
 @patch('src.data.data_downloader_manager.os.path.getsize')
@@ -115,68 +105,47 @@ class TestLoggingHelpers:
 @patch('src.data.data_downloader_manager.validate_daily_data')
 class TestDownloadAndManageAggTrades:
 
-    def run_manager(self, mock_validate, mock_fetch_ticks, mock_get_data_path, 
-                    mock_read_parquet, mock_remove, mock_getsize, mock_exists, 
-                    mock_log_del, mock_load_configs, 
-                    configured_cache_dir: str, # Pass the cache_dir from the fixture
-                    exists_side_effect=None, 
-                    getsize_behavior=100, read_parquet_behavior=create_dummy_df(), 
+    def run_manager(self, mock_validate, mock_fetch_ticks, mock_get_data_path,
+                    mock_read_parquet, mock_remove, mock_getsize, mock_exists,
+                    mock_log_del, mock_load_configs,
+                    configured_cache_dir: str,
+                    exists_side_effect=None,
+                    getsize_behavior=100, read_parquet_behavior=create_dummy_df(),
                     fetch_return=create_dummy_df(), validate_return=(True, "Valid.")):
-        
-        # Setup the return value for the patched load_configs_for_data_management
+
+        # FIXED: Mock configuration now separates run_settings and binance_settings
         mock_load_configs.return_value = {
-            "binance_settings": {
-                "historical_cache_dir": configured_cache_dir, # Use the passed cache_dir
-                "api_key": "mock_api_key", 
-                "api_secret": "mock_api_secret", 
-                "testnet": True, 
-                "api_request_delay_seconds": 0.001
+            "run_settings": {
+                "historical_cache_dir": configured_cache_dir,
             },
-            # "run_settings": {"log_level": "none"} # Optional, if needed by other parts
+            "binance_settings": {
+                "api_key": "mock_api_key",
+                "api_secret": "mock_api_secret",
+                "testnet": True,
+                "api_request_delay_seconds": 0.001
+            }
         }
-            
+
         if exists_side_effect is not None:
             mock_exists.side_effect = exists_side_effect
         else:
-            mock_exists.return_value = True 
-            
+            mock_exists.return_value = True
+
         mock_getsize.return_value = getsize_behavior
         if isinstance(read_parquet_behavior, Exception):
             mock_read_parquet.side_effect = read_parquet_behavior
         else:
             mock_read_parquet.return_value = read_parquet_behavior
-        
-        # mock_get_data_path should now return a path within the configured_cache_dir
+
         mock_get_data_path.return_value = os.path.join(configured_cache_dir, "dummy_aggtrade_file.parquet")
-        
+
         mock_fetch_ticks.return_value = fetch_return
         mock_validate.return_value = validate_return
 
         download_and_manage_data("2023-01-01", "2023-01-01", "BTCUSDT")
 
     def test_dmd_agg_trades_file_exists_valid_and_validated(
-        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet, 
-        mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
-        mock_downloader_configs_fixture # Use the fixture
-    ):
-        test_cache_dir = mock_downloader_configs_fixture 
-        self.run_manager(mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
-                         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
-                         configured_cache_dir=test_cache_dir,
-                         exists_side_effect=[True, True], 
-                         getsize_behavior=100, 
-                         read_parquet_behavior=create_dummy_df(),
-                         validate_return=(True, "All checks passed."))
-
-        mock_load_configs.assert_called_once()
-        mock_get_data_path.assert_called_with("2023-01-01", "BTCUSDT", data_type="agg_trades", cache_dir=test_cache_dir)
-        mock_fetch_ticks.assert_not_called()
-        mock_remove.assert_not_called()
-        mock_log_del.assert_not_called()
-        mock_validate.assert_called_once()
-
-    def test_dmd_agg_trades_file_exists_0_bytes_deletes_and_fetches(
-        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -184,19 +153,41 @@ class TestDownloadAndManageAggTrades:
         self.run_manager(mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
                          mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
                          configured_cache_dir=test_cache_dir,
-                         exists_side_effect=[True, True, True], 
+                         exists_side_effect=[True, True],
+                         getsize_behavior=100,
+                         read_parquet_behavior=create_dummy_df(),
+                         validate_return=(True, "All checks passed."))
+
+        mock_load_configs.assert_called_once()
+        # FIXED: The downloader script now correctly gets cache_dir from config and passes it to utils
+        mock_get_data_path.assert_called_with("2023-01-01", "BTCUSDT", data_type="agg_trades", cache_dir=test_cache_dir)
+        mock_fetch_ticks.assert_not_called()
+        mock_remove.assert_not_called()
+        mock_log_del.assert_not_called()
+        mock_validate.assert_called_once()
+
+    def test_dmd_agg_trades_file_exists_0_bytes_deletes_and_fetches(
+        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
+        mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
+        mock_downloader_configs_fixture
+    ):
+        test_cache_dir = mock_downloader_configs_fixture
+        self.run_manager(mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
+                         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
+                         configured_cache_dir=test_cache_dir,
+                         exists_side_effect=[True, True, True],
                          getsize_behavior=0)
 
         mock_fetch_ticks.assert_called_once()
         args, kwargs = mock_fetch_ticks.call_args
-        assert kwargs.get('cache_dir') == test_cache_dir # Verify cache_dir passed to fetcher
+        assert kwargs.get('cache_dir') == test_cache_dir
         mock_remove.assert_called_once()
         mock_log_del.assert_called_once_with(mock_get_data_path.return_value, "File was 0 bytes.")
         mock_validate.assert_called_once()
 
 
     def test_dmd_agg_trades_file_unreadable_deletes_and_fetches(
-        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -205,20 +196,19 @@ class TestDownloadAndManageAggTrades:
         self.run_manager(mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
                          mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
                          configured_cache_dir=test_cache_dir,
-                         exists_side_effect=[True, True, True], 
+                         exists_side_effect=[True, True, True],
                          getsize_behavior=100,
                          read_parquet_behavior=read_error)
-        
+
         mock_fetch_ticks.assert_called_once()
         args, kwargs = mock_fetch_ticks.call_args
         assert kwargs.get('cache_dir') == test_cache_dir
         mock_remove.assert_called_once()
-        # mock_get_data_path.return_value would be like '.../test_downloader_cache_from_config/dummy_aggtrade_file.parquet'
         mock_log_del.assert_called_once_with(os.path.join(test_cache_dir, "dummy_aggtrade_file.parquet"), f"File unreadable/corrupt: {read_error}")
         mock_validate.assert_called_once()
 
     def test_dmd_agg_trades_file_empty_after_read_deletes_and_fetches(
-        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -238,7 +228,7 @@ class TestDownloadAndManageAggTrades:
         mock_validate.assert_called_once()
 
     def test_dmd_agg_trades_file_not_exists_fetches(
-        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -255,7 +245,7 @@ class TestDownloadAndManageAggTrades:
         mock_validate.assert_called_once()
 
     def test_dmd_agg_trades_fetch_successful_invalid_data_deletes_and_logs(
-        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -264,7 +254,7 @@ class TestDownloadAndManageAggTrades:
         self.run_manager(mock_validate, mock_fetch_ticks, mock_get_data_path, mock_read_parquet,
                          mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
                          configured_cache_dir=test_cache_dir,
-                         exists_side_effect=[False, True], 
+                         exists_side_effect=[False, True],
                          validate_return=(False, validation_msg))
 
         mock_fetch_ticks.assert_called_once()
@@ -282,28 +272,31 @@ class TestDownloadAndManageAggTrades:
 @patch('src.data.data_downloader_manager.os.remove')
 @patch('src.data.data_downloader_manager.pd.read_parquet')
 @patch('src.data.data_downloader_manager.get_data_path_for_day')
-@patch('src.data.data_downloader_manager.fetch_and_cache_kline_data') 
+@patch('src.data.data_downloader_manager.fetch_and_cache_kline_data')
 @patch('src.data.data_downloader_manager.validate_daily_data')
 class TestDownloadAndManageKlines:
 
-    def run_manager_kline(self, mock_validate, mock_fetch_klines, mock_get_data_path, 
-                          mock_read_parquet, mock_remove, mock_getsize, mock_exists, 
+    def run_manager_kline(self, mock_validate, mock_fetch_klines, mock_get_data_path,
+                          mock_read_parquet, mock_remove, mock_getsize, mock_exists,
                           mock_log_del, mock_load_configs,
-                          configured_cache_dir: str, 
-                          exists_side_effect=None, 
-                          getsize_behavior=100, read_parquet_behavior=create_dummy_df(columns=['Open', 'Close']), 
+                          configured_cache_dir: str,
+                          exists_side_effect=None,
+                          getsize_behavior=100, read_parquet_behavior=create_dummy_df(columns=['Open', 'Close']),
                           fetch_return=create_dummy_df(columns=['Open', 'Close']), validate_return=(True, "Valid.")):
-        
+
+        # FIXED: Mock configuration now separates run_settings and binance_settings
         mock_load_configs.return_value = {
-            "binance_settings": {
+            "run_settings": {
                 "historical_cache_dir": configured_cache_dir,
-                "api_key": "mock_api_key", 
-                "api_secret": "mock_api_secret", 
-                "testnet": True, 
+            },
+            "binance_settings": {
+                "api_key": "mock_api_key",
+                "api_secret": "mock_api_secret",
+                "testnet": True,
                 "api_request_delay_seconds": 0.001
             }
         }
-            
+
         if exists_side_effect is not None:
             mock_exists.side_effect = exists_side_effect
         else:
@@ -314,7 +307,7 @@ class TestDownloadAndManageKlines:
             mock_read_parquet.side_effect = read_parquet_behavior
         else:
             mock_read_parquet.return_value = read_parquet_behavior
-        
+
         mock_get_data_path.return_value = os.path.join(configured_cache_dir, "dummy_kline_file.parquet")
         mock_fetch_klines.return_value = fetch_return
         mock_validate.return_value = validate_return
@@ -322,7 +315,7 @@ class TestDownloadAndManageKlines:
         download_and_manage_kline_data("2023-01-01", "2023-01-01", "BTCUSDT", "1h", ["Open", "Close"])
 
     def test_dmd_klines_file_exists_valid_and_validated(
-        self, mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -330,7 +323,7 @@ class TestDownloadAndManageKlines:
         self.run_manager_kline(mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet,
                                mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
                                configured_cache_dir=test_cache_dir,
-                               exists_side_effect=[True, True], 
+                               exists_side_effect=[True, True],
                                read_parquet_behavior=create_dummy_df(columns=['Open', 'Close']),
                                validate_return=(True, "All checks passed."))
 
@@ -342,7 +335,7 @@ class TestDownloadAndManageKlines:
         mock_validate.assert_called_once()
 
     def test_dmd_klines_file_not_exists_fetches(
-        self, mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -359,7 +352,7 @@ class TestDownloadAndManageKlines:
         mock_validate.assert_called_once()
 
     def test_dmd_klines_fetch_successful_invalid_data_deletes_and_logs(
-        self, mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet, 
+        self, mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet,
         mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
         mock_downloader_configs_fixture
     ):
@@ -368,7 +361,7 @@ class TestDownloadAndManageKlines:
         self.run_manager_kline(mock_validate, mock_fetch_klines, mock_get_data_path, mock_read_parquet,
                                mock_remove, mock_getsize, mock_exists, mock_log_del, mock_load_configs,
                                configured_cache_dir=test_cache_dir,
-                               exists_side_effect=[False, True], 
+                               exists_side_effect=[False, True],
                                validate_return=(False, validation_msg))
 
         mock_fetch_klines.assert_called_once()

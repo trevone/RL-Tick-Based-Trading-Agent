@@ -33,21 +33,27 @@ def mock_config_dir(tmp_path):
     defaults_dir = cfg_dir / "defaults"
     defaults_dir.mkdir()
 
-    (defaults_dir / "run_settings.yaml").write_text("run_settings:\n  log_dir_base: 'logs/'\n  model_name: 'test_agent'\n  log_level: 'none'\n  eval_log_dir: 'logs/evaluation/'\n  model_path: 'logs/training/mock_hash_test_agent/best_model/best_model.zip'\n")
-    (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price', 'IsBuyerMaker']\n  initial_balance: 10000.0\n  tick_resample_interval_ms: 60000\n")
-    (defaults_dir / "binance_settings.yaml").write_text("binance_settings:\n  default_symbol: 'BTCUSDT'\n  historical_interval: '1h'\n  historical_cache_dir: 'data_cache/'\n")
-
-    (defaults_dir / "evaluation_data.yaml").write_text("""
-evaluation_data:
+    # FIXED: Centralized all run-time settings into run_settings.yaml
+    (defaults_dir / "run_settings.yaml").write_text("""
+run_settings:
+  log_dir_base: 'logs/'
+  model_name: 'test_agent'
+  log_level: 'none'
+  eval_log_dir: 'logs/evaluation/'
+  model_path: 'logs/training/mock_hash_test_agent/best_model/best_model.zip'
+  default_symbol: 'BTCUSDT'
+  historical_interval: '1h'
+  historical_cache_dir: 'data_cache/'
   start_date_eval: '2024-01-01 00:00:00'
   end_date_eval: '2024-01-01 23:59:59'
-  start_date_kline_eval: '2024-01-01 00:00:00'
-  end_date_kline_eval: '2024-01-01 23:59:59'
-  start_date_tick_eval: '2024-01-01 00:00:00'
-  end_date_tick_eval: '2024-01-01 23:59:59'
   n_evaluation_episodes: 1
 """)
-    (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size', 'tick_resample_interval_ms', 'tick_features_to_use']\n  agent_params:\n    PPO: ['learning_rate']\n  binance_settings: ['default_symbol']\n")
+    (defaults_dir / "environment.yaml").write_text("environment:\n  kline_window_size: 1\n  tick_feature_window_size: 1\n  kline_price_features: ['Close']\n  tick_features_to_use: ['Price', 'IsBuyerMaker']\n  initial_balance: 10000.0\n  tick_resample_interval_ms: 60000\n")
+    # These files are now empty of the moved keys
+    (defaults_dir / "evaluation_data.yaml").write_text("# This file is now empty\n")
+    (defaults_dir / "binance_settings.yaml").write_text("binance_settings: {}\n")
+    # Updated hash_keys to look inside run_settings
+    (defaults_dir / "hash_keys.yaml").write_text("hash_config_keys:\n  environment: ['kline_window_size', 'tick_resample_interval_ms', 'tick_features_to_use']\n  agent_params:\n    PPO: ['learning_rate']\n  run_settings: ['default_symbol']\n")
     (defaults_dir / "ppo_params.yaml").write_text("ppo_params:\n  learning_rate: 0.0003\n")
 
     (tmp_path / "config.yaml").write_text("agent_type: 'PPO'\n")
@@ -142,16 +148,23 @@ def test_evaluate_agent_main_runs_successfully(
         mock_kline_loader, mock_tick_loader = mock_data_loader
         with patch('src.agents.evaluate_agent.load_default_configs_for_evaluation') as mock_load_defaults:
             dummy_model_path = os.path.join("logs", "training", "mock_hash_test_agent", "best_model", "best_model.zip")
+            # FIXED: Updated mock config to reflect new structure
             mock_load_defaults.return_value = {
                 "agent_type": "PPO",
                 "run_settings": {
                     "log_level": "none",
                     "eval_log_dir": "logs/evaluation/",
-                    "model_path": dummy_model_path
+                    "model_path": dummy_model_path,
+                    "default_symbol": "BTCUSDT",
+                    "historical_interval": "1h",
+                    "historical_cache_dir": "data_cache/",
+                    "start_date_eval": '2024-01-01 00:00:00',
+                    "end_date_eval": '2024-01-01 23:59:59',
+                    "n_evaluation_episodes": 1,
                 },
                 "environment": {"kline_window_size": 1, "tick_feature_window_size": 1, "kline_price_features": ['Close'], "tick_features_to_use": ['Price', 'IsBuyerMaker'], "initial_balance":10000.0, "tick_resample_interval_ms": 60000},
-                "binance_settings": {"default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": "data_cache/"},
-                "evaluation_data": {'start_date_eval': '2024-01-01 00:00:00', 'end_date_eval': '2024-01-01 23:59:59', 'start_date_kline_eval': '2024-01-01 00:00:00', 'end_date_kline_eval': '2024-01-01 23:59:59', 'start_date_tick_eval': '2024-01-01 00:00:00', 'end_date_tick_eval': '2024-01-01 23:59:59', 'n_evaluation_episodes': 1},
+                "binance_settings": {},
+                "evaluation_data": {},
                 "hash_config_keys": {}
             }
             evaluate_agent_main()
@@ -175,17 +188,24 @@ def test_evaluate_agent_main_produces_logs_and_charts(
         dummy_model_path = os.path.join("logs", "training", "mock_hash_test_agent", "best_model", "best_model.zip")
         eval_log_dir_relative = os.path.join("logs", "evaluation")
 
+        # FIXED: Updated mock config to reflect new structure
         mock_load_defaults.return_value = {
             "agent_type": "PPO",
             "run_settings": {
                 "log_level": "none",
                 "eval_log_dir": eval_log_dir_relative,
-                "model_path": dummy_model_path
+                "model_path": dummy_model_path,
+                "default_symbol": "BTCUSDT",
+                "historical_interval": "1h",
+                "historical_cache_dir": "data_cache/",
+                "start_date_eval": '2024-01-01 00:00:00',
+                "end_date_eval": '2024-01-01 23:59:59',
+                "n_evaluation_episodes": 1
             },
             "environment": {"kline_window_size": 1, "tick_feature_window_size": 1, "kline_price_features": ['Close'], "tick_features_to_use": ['Price', 'IsBuyerMaker'], "initial_balance":10000.0, "tick_resample_interval_ms": 60000},
-            "binance_settings": {"default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": "data_cache/"},
-            "evaluation_data": {'start_date_eval': '2024-01-01 00:00:00', 'end_date_eval': '2024-01-01 23:59:59', 'start_date_kline_eval': '2024-01-01 00:00:00', 'end_date_kline_eval': '2024-01-01 23:59:59', 'start_date_tick_eval': '2024-01-01 00:00:00', 'end_date_tick_eval': '2024-01-01 23:59:59', 'n_evaluation_episodes': 1},
-             "hash_config_keys": {}
+            "binance_settings": {},
+            "evaluation_data": {},
+            "hash_config_keys": {}
         }
 
         mock_kline_loader, mock_tick_loader = mock_data_loader
@@ -218,22 +238,22 @@ def test_evaluate_agent_main_produces_logs_and_charts(
 
         mock_json_dump.assert_called()
         expected_config_filename = "effective_eval_config.json"
-        expected_config_file_path = os.path.join(abs_path_from_plot_call, expected_config_filename) # Use absolute path for construction
+        expected_config_file_path = os.path.join(abs_path_from_plot_call, expected_config_filename)
         abs_expected_config_file_path = os.path.abspath(expected_config_file_path)
 
 
         config_dump_called_correctly = False
         actual_json_dump_files_abs = []
         for call_item in mock_json_dump.call_args_list:
-            if len(call_item.args) > 1: # Check for positional arguments
-                file_object_arg = call_item.args[1] # Second positional arg is the file pointer
+            if len(call_item.args) > 1:
+                file_object_arg = call_item.args[1]
                 if hasattr(file_object_arg, 'name'):
                     abs_saved_path = os.path.abspath(file_object_arg.name)
                     actual_json_dump_files_abs.append(abs_saved_path)
                     if abs_saved_path == abs_expected_config_file_path:
                         config_dump_called_correctly = True
                         break
-        
+
         assert config_dump_called_correctly, \
             f"json.dump was not called to save '{expected_config_filename}' to '{abs_expected_config_file_path}'.\n" \
             f"Actual files json.dump was called with (abspaths): {actual_json_dump_files_abs}"
