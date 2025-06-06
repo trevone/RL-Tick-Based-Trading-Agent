@@ -1,4 +1,5 @@
 # scripts/read_cache_sample.py
+
 import pandas as pd
 import os
 import argparse
@@ -40,7 +41,7 @@ def main():
 
         if not os.path.exists(file_path):
             print(f"File not found: {file_path}")
-            print("Please ensure the data has been downloaded and cached using data_downloader_manager.py.")
+            print("Please ensure the data has been downloaded and cached using data_manager.py.")
             sys.exit(1)
 
         print(f"Attempting to read data from: {file_path}")

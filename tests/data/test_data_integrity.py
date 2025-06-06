@@ -1,4 +1,5 @@
 # tests/data/test_data_integrity.py
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -6,7 +7,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 
-from src.data.check_tick_cache import (
+from src.data.data_validator import (
     parse_filename_for_metadata,
     validate_daily_data,
     interval_to_timedelta

@@ -1,18 +1,18 @@
-# tests/agents/test_hyperparameter_optimization.py
+# tests/agents/test_hpo.py
 import pytest
 import optuna
 import json
 import os
 from unittest.mock import patch, MagicMock, ANY, mock_open
 
-from src.agents.hyperparameter_optimization import (
+# V-- CHANGE THESE LINES --V
+from src.agents.hpo import (
     load_default_configs_for_optimization,
     objective,
     main as hpo_main
 )
-# --- UPDATED IMPORT ---
+# ^-- CHANGE THESE LINES --^
 from src.data.config_loader import convert_to_native_types
-# --- END UPDATED IMPORT ---
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def test_load_default_configs_for_optimization(mock_hpo_config_dir):
     assert loaded_config["ppo_params"]["n_steps"] == 2048
 
 
-@patch('src.agents.hyperparameter_optimization.train_agent')
+@patch('src.agents.hpo.train_agent')
 def test_objective_ppo_suggestions(mock_train_agent, mock_hpo_config_dir):
     """Test PPO hyperparameter suggestions and passing to train_agent."""
     mock_train_agent.return_value = 0.75
@@ -129,7 +129,7 @@ def test_objective_ppo_suggestions(mock_train_agent, mock_hpo_config_dir):
     assert call_args[1]['log_to_file'] is False
 
 
-@patch('src.agents.hyperparameter_optimization.train_agent')
+@patch('src.agents.hpo.train_agent')
 def test_objective_sac_suggestions(mock_train_agent, mock_hpo_config_dir):
     """Test SAC hyperparameter suggestions."""
     mock_train_agent.return_value = 0.65
@@ -177,7 +177,7 @@ def test_objective_sac_suggestions(mock_train_agent, mock_hpo_config_dir):
     assert called_config_override["sac_params"]["total_timesteps"] == 666
 
 
-@patch('src.agents.hyperparameter_optimization.train_agent')
+@patch('src.agents.hpo.train_agent')
 def test_objective_pruning_raises_exception(mock_train_agent, mock_hpo_config_dir):
     """Test that TrialPruned is raised if trial.should_prune() is True."""
     mock_train_agent.return_value = 0.1
@@ -199,7 +199,7 @@ def test_objective_pruning_raises_exception(mock_train_agent, mock_hpo_config_di
     mock_train_agent.assert_called_once()
 
 
-@patch('src.agents.hyperparameter_optimization.load_default_configs_for_optimization')
+@patch('src.agents.hpo.load_default_configs_for_optimization')
 @patch('optuna.create_study')
 @patch('builtins.open', new_callable=mock_open)
 @patch('json.dump')
@@ -229,7 +229,7 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
     mock_study_instance.trials = [mock_study_instance.best_trial]
     mock_create_study.return_value = mock_study_instance
 
-    with patch('src.agents.hyperparameter_optimization.objective') as mock_hpo_objective_fn:
+    with patch('src.agents.hpo.objective') as mock_hpo_objective_fn:
         mock_hpo_objective_fn.return_value = 0.88
         hpo_main()
 
@@ -252,7 +252,6 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
         assert optimize_call_kwargs['timeout'] is None
         assert optimize_call_kwargs['callbacks'] is None
 
-        # CORRECTED: Assert the relative path string for the saved JSON file.
         expected_save_filename = f"best_hyperparameters_{test_study_name}.json"
         expected_relative_save_path = os.path.join("optuna_studies", expected_save_filename)
         

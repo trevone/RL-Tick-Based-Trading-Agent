@@ -1,4 +1,4 @@
-# src/data/data_downloader_manager.py
+# src/data/data_manager.py
 
 import argparse
 import os
@@ -10,7 +10,7 @@ import sys
 from src.data.config_loader import load_config
 from src.data.path_manager import get_data_path_for_day
 from src.data.binance_client import fetch_and_cache_tick_data, fetch_and_cache_kline_data
-from src.data.check_tick_cache import validate_daily_data
+from src.data.data_validator import validate_daily_data
 # --- END UPDATED IMPORTS ---
 
 LOG_DIR_BASE_NAME = "logs"
@@ -79,7 +79,6 @@ def _log_deletion_event(file_path: str, reason: str):
             f.write(log_message)
     except Exception as e:
         print(f"  ERROR: Failed to write to deletion log ({log_file_full_path}): {e}")
-# --- END Logging for Deleted Files ---
 
 # NEW: Function to load configurations for data management
 def load_configs_for_data_management(config_dir="configs/defaults") -> dict:

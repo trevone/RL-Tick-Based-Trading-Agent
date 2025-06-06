@@ -1,4 +1,3 @@
-
 # RL Tick-Based Trading Agent
 
 This project implements a Reinforcement Learning (RL) agent for algorithmic trading, designed to operate on real-time tick and K-line market data using the Binance exchange API. The agent is trained using various RL algorithms from Stable Baselines3 within a custom Gymnasium environment.
@@ -30,15 +29,15 @@ This project implements a Reinforcement Learning (RL) agent for algorithmic trad
   * **Observation Space**: Integrates granular tick data (Price, Quantity), comprehensive K-line data (OHLCV, SMAs, RSIs, ATR, MACD), and candlestick patterns (Doji, Hammer, Engulfing, etc.) for a rich market observation.
   * **Action Space**: Supports both discrete trading actions (Hold, Buy, Sell) and a continuous profit target parameter for strategic exits.
   * **Multi-Algorithm Support**: Supports various Stable Baselines3 algorithms, including **PPO**, **SAC**, **DDPG**, **A2C**, and **RecurrentPPO** (from `sb3-contrib`), configurable via `config.yaml`.
-  * **Unified Configuration (`configs/`)**: A layered configuration system where a main `config.yaml` overrides defaults from the `configs/defaults/` directory. [cite_start]**`run_settings.yaml`** now centralizes all data period, symbol, and logging configurations. [cite: 17, 30]
-  * [cite_start]**Action Space Wrapper (`src/environments/custom_wrappers.py`)**: Includes a custom `FlattenAction` wrapper to convert the environment's `Tuple` action space into a `Box` space, making it compatible with standard Stable Baselines3 algorithms. [cite: 10]
-  * [cite_start]**Binance Data Fetching (`src/data/utils.py`)**: Fetches historical K-line and aggregate trade (tick) data directly from Binance (Mainnet or Testnet) using `python-binance`. [cite: 12]
+  * **Unified Configuration (`configs/`)**: A layered configuration system where a main `config.yaml` overrides defaults from the `configs/defaults/` directory. **`run_settings.yaml`** now centralizes all data period, symbol, and logging configurations.
+  * **Action Space Wrapper (`src/environments/custom_wrappers.py`)**: Includes a custom `FlattenAction` wrapper to convert the environment's `Tuple` action space into a `Box` space, making it compatible with standard Stable Baselines3 algorithms.
+  * **Binance Data Fetching (`src/data/binance_client.py`)**: Fetches historical K-line and aggregate trade (tick) data directly from Binance (Mainnet or Testnet) using `python-binance`.
   * **Data Caching**: Implements smart caching of fetched data to local Parquet files, significantly speeding up subsequent runs and reducing API calls.
-  * [cite_start]**Technical Analysis (TA-Lib)**: Calculates various technical indicators and detects candlestick patterns using the optimized `TA-Lib` library. [cite: 12]
-  * [cite_start]**Configuration Hashing**: Training runs are uniquely identified by a hash of their core configuration parameters, ensuring organized logging and easy model retrieval. [cite: 15, 27]
-  * [cite_start]**Model Evaluation Script (`src/agents/evaluate_agent.py`)**: A dedicated script to evaluate a trained agent on unseen historical data, providing performance summaries and trade history plots. [cite: 18]
-  * [cite_start]**Live Trading Script (`src/agents/live_trader.py`)**: Connects to Binance WebSockets for real-time tick data and executes agent-driven trades (on Testnet or Mainnet). [cite: 16]
-  * [cite_start]**Hyperparameter Optimization (`src/agents/hyperparameter_optimization.py`)**: Integrates Optuna for automated hyperparameter tuning to maximize agent performance. [cite: 17]
+  * **Technical Analysis (TA-Lib)**: Calculates various technical indicators and detects candlestick patterns using the optimized `TA-Lib` library.
+  * **Configuration Hashing**: Training runs are uniquely identified by a hash of their core configuration parameters, ensuring organized logging and easy model retrieval.
+  * **Model Evaluation Script (`src/agents/evaluate_agent.py`)**: A dedicated script to evaluate a trained agent on unseen historical data, providing performance summaries and trade history plots.
+  * **Live Trading Script (`src/agents/live_trader.py`)**: Connects to Binance WebSockets for real-time tick data and executes agent-driven trades (on Testnet or Mainnet).
+  * **Hyperparameter Optimization (`src/agents/hyperparameter_optimization.py`)**: Integrates Optuna for automated hyperparameter tuning to maximize agent performance.
 
 ## Project Structure
 
@@ -49,14 +48,18 @@ This project implements a Reinforcement Learning (RL) agent for algorithmic trad
 │   │   ├── base_env.py                 # Custom Gymnasium trading environment
 │   │   └── custom_wrappers.py          # Custom Gymnasium environment wrappers
 │   ├── data/                           # Data handling utilities
-│   │   ├── utils.py                    # Data fetching, TA calculation, config handling
-│   │   ├── data_downloader_manager.py  # Script for managing data downloads
-│   │   └── check_tick_cache.py         # Script for validating cached data
+│   │   ├── binance_client.py           # Functions for fetching data from Binance API
+│   │   ├── config_loader.py            # YAML configuration loading and merging
+│   │   ├── data_loader.py              # High-level functions for loading data ranges
+│   │   ├── feature_engineer.py         # Technical indicator calculation
+│   │   ├── path_manager.py             # Manages file paths for cached data
+│   │   ├── data_manager.py             # Script for managing data downloads
+│   │   └── data_validator.py           # Script for validating cached data
 │   └── agents/                         # Agent-related scripts
 │       ├── train_agent.py              # Unified training script for all algorithms
 │       ├── evaluate_agent.py           # Unified evaluation script
 │       ├── live_trader.py              # Unified live trading script
-│       └── hyperparameter_optimization.py # Optuna optimization script
+│       └── hpo.py                      # Optuna optimization script
 │
 ├── configs/                            # Configuration files
 │   ├── config.yaml                     # Main config (overrides defaults), specifies agent_type
@@ -109,7 +112,7 @@ This project implements a Reinforcement Learning (RL) agent for algorithmic trad
 You need API keys from Binance to fetch historical data and execute live trades.
 
 1.  **Generate API Keys** on the Binance website (or Testnet for safe testing).
-2.  **Configure API Keys**: It's **highly recommended** to set API keys as environment variables (`BINANCE_API_KEY`, `BINANCE_API_SECRET`). [cite_start]The scripts will automatically use them if the key/secret fields in `configs/defaults/binance_settings.yaml` are empty. [cite: 200]
+2.  **Configure API Keys**: It's **highly recommended** to set API keys as environment variables (`BINANCE_API_KEY`, `BINANCE_API_SECRET`). The scripts will automatically use them if the key/secret fields in `configs/defaults/binance_settings.yaml` are empty.
 
 ### TA-Lib Installation
 
@@ -120,10 +123,10 @@ You need API keys from Binance to fetch historical data and execute live trades.
 The project uses a layered configuration system for maximum flexibility and reproducibility.
 
 1.  **Default Settings (`configs/defaults/`)**: These files contain the base parameters for every component.
-    * [cite_start]**`run_settings.yaml`**: **This is the new central configuration file.** It controls logging, model naming, and crucially, all data settings like the symbol, cache directory, and date ranges for both training and evaluation. [cite: 17, 30]
-    * [cite_start]**`environment.yaml`**: Defines the trading environment (observation space, rewards, initial balance). [cite: 201]
-    * [cite_start]**`ppo_params.yaml`**, **`sac_params.yaml`**, etc.: Contain the default hyperparameters for each specific RL algorithm. [cite: 17, 28, 202]
-    * [cite_start]**`binance_settings.yaml`**: Now only contains API credentials and testnet status. [cite: 200]
+    * **`run_settings.yaml`**: **This is the new central configuration file.** It controls logging, model naming, and crucially, all data settings like the symbol, cache directory, and date ranges for both training and evaluation.
+    * **`environment.yaml`**: Defines the trading environment (observation space, rewards, initial balance).
+    * **`ppo_params.yaml`**, **`sac_params.yaml`**, etc.: Contain the default hyperparameters for each specific RL algorithm.
+    * **`binance_settings.yaml`**: Now only contains API credentials and testnet status.
 
 2.  **Main Configuration (`config.yaml`)**: This file in the project root is your primary interface. Any parameter you set here **will override** the value from the default files.
     * **Crucially**, you must specify the `agent_type` (e.g., `PPO`, `SAC`, `RecurrentPPO`) in `config.yaml`. The system will then load the appropriate `..._params.yaml` file from the defaults.
@@ -175,33 +178,41 @@ The project uses a layered configuration system for maximum flexibility and repr
 
 ### 1. Data Acquisition and Caching
 
-Use the `data_downloader_manager.py` script to fetch and cache historical data from Binance.
+Use the `data_manager.py` script to fetch and cache historical data from Binance.
 
 **Command Structure:**
 
 ```bash
-python -m src.data.data_downloader_manager --start_date <YYYY-MM-DD> --end_date <YYYY-MM-DD> --symbol <SYMBOL> --data_type <agg_trades|kline> [kline_options]
+python -m src.data.data_manager --start_date <YYYY-MM-DD> --end_date <YYYY-MM-DD> --symbol <SYMBOL> --data_type <agg_trades|kline> [kline_options]
 ```
 
 **Examples:**
 
 1.  **Download Aggregate Trade (Tick) Data:**
     ```bash
-    python -m src.data.data_downloader_manager --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type agg_trades
+    python -m src.data.data_manager --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type agg_trades
     ```
 
 2.  **Download 1-hour K-line Data with TAs:**
     ```bash
-    python -m src.data.data_downloader_manager --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type kline --interval 1h --kline_features Open Close Volume SMA_10 RSI_7
+    python -m src.data.data_manager --start_date 2024-01-01 --end_date 2024-01-07 --symbol BTCUSDT --data_type kline --interval 1h --kline_features Open Close Volume SMA_10 RSI_7
     ```
 
 ### 2. Data Verification
 
-Use the `read_cache_sample.py` script to quickly inspect a sample of your cached data for a specific day.
+Use the `data_validator.py` script to check the integrity of all cached data for a symbol, or a single file.
 
-```bash
-python -m scripts.read_cache_sample --symbol BTCUSDT --date 2024-01-01 --data_type agg_trades
-```
+**Examples:**
+
+1.  **Check all cached files:**
+    ```bash
+    python -m src.data.data_validator --cache_dir data_cache/
+    ```
+
+2.  **Check a specific file:**
+    ```bash
+    python -m src.data.data_validator --filepath data_cache/BTCUSDT/bn_aggtrades_BTCUSDT_2024-01-01.parquet
+    ```
 
 ### 3. Agent Training
 
@@ -223,7 +234,7 @@ python -m scripts.read_cache_sample --symbol BTCUSDT --date 2024-01-01 --data_ty
       * Open `configs/defaults/hyperparameter_optimization.yaml` to define the study name, number of trials, and the search space for hyperparameters.
 2.  **Run the Optimization Script**:
     ```bash
-    python -m src.agents.hyperparameter_optimization
+    python -m src.agents.hpo
     ```
       * Results are saved in `optuna_studies/`. The best parameters will be printed and saved to a `.json` file.
 
@@ -238,7 +249,7 @@ python -m scripts.read_cache_sample --symbol BTCUSDT --date 2024-01-01 --data_ty
     python -m src.agents.evaluate_agent
     ```
     * A performance summary will be printed to the console.
-    * [cite_start]A performance chart and detailed trade history are saved to a timestamped subdirectory in `logs/evaluation/`. [cite: 18]
+    * A performance chart and detailed trade history are saved to a timestamped subdirectory in `logs/evaluation/`.
 
 ### 6. Live Trading (Testnet/Mainnet)
 

@@ -1,4 +1,5 @@
-# src/data/check_tick_cache.py
+# src/data/data_validator.py
+
 import os
 import pandas as pd
 import numpy as np
@@ -33,7 +34,7 @@ EXPECTED_KLINE_BASE_COLUMNS_INFO = {
 AGG_TRADES_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_aggtrades)_" # Matches the fixed prefix "bn_aggtrades_"
     r"(?P<symbol>[A-Z0-9]+)_"      # Matches the symbol (e.g., BTCUSDT)
-    r"(?P<date>\d{4}-\d{2}-\d{2})" # Matchesnemidophorus-MM-DD
+    r"(?P<date>\d{4}-\d{2}-\d{2})" # Matches YYYY-MM-DD
     r"\.parquet$"                  # Matches ".parquet" extension
 )
 
@@ -43,7 +44,7 @@ KLINE_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_klines)_"     # Matches the fixed prefix "bn_klines_"
     r"(?P<symbol>[A-Z0-9]+)_"      # Matches the symbol (e.g., BTCUSDT)
     r"(?P<interval>[a-zA-Z0-9]+)_" # Matches the interval (e.g., 1h, 1m, 1d)
-    r"(?P<date>\d{4}-\d{2}-\d{2})"     # Matches Cnemidophorus-MM-DD
+    r"(?P<date>\d{4}-\d{2}-\d{2})"     # Matches YYYY-MM-DD
     r"(?P<features>_([a-zA-Z0-9]+(_[a-zA-Z0-9]+)*))?" # Optional features part (e.g., _sma20_rsi14_volume)
     r"\.parquet$"                  # Matches ".parquet" extension
 )
@@ -137,7 +138,6 @@ def parse_filename_for_metadata(filename):
             
             base_ohlcv = ['Open', 'High', 'Low', 'Close', 'Volume']
             # Ensure base OHLCV are always considered expected, even if not explicitly in filename features string
-            # This accounts for when --kline_features is not passed or only TAs are listed.
             for col in base_ohlcv:
                 if col not in parsed_features:
                     parsed_features.append(col) # Add to the list to be checked
@@ -156,36 +156,34 @@ def parse_filename_for_metadata(filename):
     
     return None
 
-def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool, str]: # MODIFIED: Added log_level
+def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool, str]:
     """
     Performs various checks on a single daily Parquet cache file for aggregate trades OR klines.
     Returns True and a success message if all checks pass, False and an error message otherwise.
     """
     if log_level != "none":
-        print(f"\n--- Checking File: {filepath} ---") # MODIFIED: Conditional print
+        print(f"\n--- Checking File: {filepath} ---")
     
     df = pd.DataFrame()
     max_read_retries = 10
     read_retry_delay_sec = 0.2
 
-    # Check for 0-byte file explicitly to avoid pyarrow.lib.ArrowInvalid
     if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
         if log_level != "none":
-            print(f"  File is 0 bytes: {filepath}. Treating as empty but valid.") # MODIFIED: Conditional print
-        # Return an empty DataFrame, then the df.empty check will handle it.
+            print(f"  File is 0 bytes: {filepath}. Treating as empty but valid.")
         return True, "DataFrame is empty (0 bytes). (May be valid for periods with no trades/klines)."
 
     for i in range(max_read_retries):
         try:
             df = pd.read_parquet(filepath)
             if log_level != "none":
-                print(f"  Successfully read Parquet file after {i+1} attempt(s). Shape: {df.shape}") # MODIFIED: Conditional print
+                print(f"  Successfully read Parquet file after {i+1} attempt(s). Shape: {df.shape}")
             if df.empty:
                 return True, "DataFrame is empty after reading. (May be valid for periods with no trades/klines)."
             break
         except FileNotFoundError:
             if log_level != "none":
-                print(f"  WARNING: File not found during read attempt {i+1}/{max_read_retries}. Retrying in {read_retry_delay_sec}s...") # MODIFIED: Conditional print
+                print(f"  WARNING: File not found during read attempt {i+1}/{max_read_retries}. Retrying in {read_retry_delay_sec}s...")
             time.sleep(read_retry_delay_sec)
         except Exception as e:
             traceback.print_exc()
@@ -195,15 +193,15 @@ def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool,
 
     file_size_bytes = os.path.getsize(filepath)
     if log_level != "none":
-        print(f"  File Size: {file_size_bytes / 1024:.2f} KB") # MODIFIED: Conditional print
+        print(f"  File Size: {file_size_bytes / 1024:.2f} KB")
 
 
     metadata = parse_filename_for_metadata(filepath)
     if metadata:
         if log_level != "none":
-            print(f"  Parsed Metadata: Data Type={metadata['data_type']}, Symbol={metadata['symbol']}, Start={metadata['start_time_utc']}, End={metadata['end_time_utc']}") # MODIFIED: Conditional print
+            print(f"  Parsed Metadata: Data Type={metadata['data_type']}, Symbol={metadata['symbol']}, Start={metadata['start_time_utc']}, End={metadata['end_time_utc']}")
             if metadata['data_type'] == 'kline':
-                print(f"    Interval={metadata['interval']}, Features={metadata['features']}") # MODIFIED: Conditional print
+                print(f"    Interval={metadata['interval']}, Features={metadata['features']}")
     else:
         return False, f"Could not parse filename '{os.path.basename(filepath)}' for metadata. It does not match the expected pattern."
 
@@ -230,7 +228,6 @@ def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool,
         messages.append("Index (Timestamp) is not monotonically increasing.")
         all_checks_ok = False
     
-    # 4. Column Presence and Unexpected Columns
     expected_cols_set = set(expected_cols_info.keys())
     actual_cols_set = set(df.columns)
 
@@ -243,7 +240,6 @@ def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool,
     if extra_cols:
         messages.append(f"WARNING: Found unexpected extra columns: {extra_cols}")
 
-    # 5. Data Type, NaN, and Specific Value Checks
     for col_name, info in expected_cols_info.items():
         if col_name not in df.columns:
             continue
@@ -265,7 +261,6 @@ def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool,
             if (df[col_name] <= 0).any():
                 messages.append(f"WARNING: Column '{col_name}' contains zero or negative values but expected positive.")
 
-    # 6. Timestamp Range Check
     if not df.empty:
         min_time_in_df = df.index.min()
         max_time_in_df = df.index.max()
@@ -283,13 +278,10 @@ def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool,
             
             if min_time_in_df < expected_start - leeway:
                 messages.append(f"WARNING: First timestamp in K-line data ({min_time_in_df}) is slightly before expected start from filename ({expected_start}).")
-            elif min_time_in_df > expected_start + interval_td: # Allow up to one interval start for potential missing first candle (though generally shouldn't happen for full day)
+            elif min_time_in_df > expected_start + interval_td:
                 messages.append(f"ERROR: First timestamp in K-line data ({min_time_in_df}) is significantly after expected start from filename ({expected_start}). Data might be missing from start.")
                 all_checks_ok = False
             
-            # For klines, the last candle's *open time* should correspond to the interval just before the end of the day.
-            # E.g., for 1h, last candle starts at 23:00:00 (for day ending 23:59:59.999999)
-            # The expected last open time is the start of the day + 23 * interval (for 1h) or end of day - interval
             expected_last_kline_open_time = pd.Timestamp(expected_end.date() + timedelta(days=1), tz=timezone.utc) - interval_td
 
             if max_time_in_df < expected_last_kline_open_time - leeway:
@@ -300,8 +292,6 @@ def validate_daily_data(filepath: str, log_level: str = "normal") -> tuple[bool,
             
             if df.shape[0] > 1:
                 time_diffs = df.index.to_series().diff().dropna()
-                # Check if all time differences are approximately the interval duration
-                # Allow a small margin for float precision
                 if not ((time_diffs >= interval_td - timedelta(milliseconds=10)) & (time_diffs <= interval_td + timedelta(milliseconds=10))).all():
                     messages.append(f"ERROR: K-line intervals are not consistently {metadata['interval']}. Max gap: {time_diffs.max()}, Min gap: {time_diffs.min()}. Data might be incomplete or corrupted.")
                     all_checks_ok = False
@@ -341,10 +331,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cache_dir",
-        default=DATA_CACHE_DIR, # Use imported DATA_CACHE_DIR
+        default=DATA_CACHE_DIR,
         help=f"Directory containing cache files. Default: {DATA_CACHE_DIR}"
     )
-    parser.add_argument( # NEW: Added log_level argument for main script
+    parser.add_argument(
         "--log_level",
         default="normal",
         choices=["none", "normal", "detailed"],
@@ -365,7 +355,7 @@ if __name__ == "__main__":
             print(f"ERROR: Specified file '{args.filepath}' is not a .parquet file.")
             exit(1)
         
-        is_valid, msg = validate_daily_data(args.filepath, log_level=args.log_level) # MODIFIED: Pass log_level
+        is_valid, msg = validate_daily_data(args.filepath, log_level=args.log_level)
         print(msg)
         if not is_valid:
             exit(1)
@@ -384,7 +374,7 @@ if __name__ == "__main__":
             overall_passed = 0
             overall_failed = 0
             for filepath in found_files:
-                is_valid, msg = validate_daily_data(filepath, log_level=args.log_level) # MODIFIED: Pass log_level
+                is_valid, msg = validate_daily_data(filepath, log_level=args.log_level)
                 print(msg)
                 if is_valid:
                     overall_passed += 1

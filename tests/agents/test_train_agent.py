@@ -1,4 +1,4 @@
-# tests/data/test_data_integrity.py
+# tests/agents/test_train_agent.py
 import pytest
 import pandas as pd
 import numpy as np
@@ -6,17 +6,20 @@ import os
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 
-# Import functions from the new path
-from src.data.check_tick_cache import (
+# --- UPDATED IMPORT ---
+# Import functions from the new `data_validator.py` path
+from src.data.data_validator import (
     parse_filename_for_metadata,
     validate_daily_data,
     interval_to_timedelta
 )
-# Corrected import after refactoring
+# --- END UPDATED IMPORT ---
 from src.data.path_manager import get_data_path_for_day
 
 
-# Apply pytest-order marker to ensure this module runs first
+# Apply pytest-order marker
+# Note: The content of this file seems to be for data integrity,
+# so its order should be low to run early.
 pytestmark = pytest.mark.order(1)
 
 

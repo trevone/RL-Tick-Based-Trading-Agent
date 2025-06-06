@@ -1,4 +1,5 @@
-# tests/data/test_data_downloader_manager.py
+# tests/data/test_data_manager.py
+
 import pytest
 import os
 import pandas as pd
@@ -8,7 +9,7 @@ from datetime import datetime, timezone, date
 import shutil
 
 # Import the module to be tested and its dependencies
-from src.data.data_downloader_manager import (
+from src.data.data_manager import (
     download_and_manage_data,
     download_and_manage_kline_data,
     _ensure_log_file_path,
@@ -26,7 +27,7 @@ def create_dummy_df(columns=['Price', 'Quantity', 'IsBuyerMaker'], num_rows=5, a
 def mock_tmp_path_for_downloader(tmp_path, monkeypatch):
     project_root = tmp_path / "project_root_downloader"
     project_root.mkdir(exist_ok=True)
-    monkeypatch.setattr('src.data.data_downloader_manager._get_project_root', lambda: str(project_root))
+    monkeypatch.setattr('src.data.data_manager._get_project_root', lambda: str(project_root))
     return project_root
 
 @pytest.fixture
@@ -45,7 +46,6 @@ def mock_downloader_configs_fixture(tmp_path, monkeypatch):
     test_cache_dir_via_config = str(tmp_path / "test_downloader_cache_from_config")
     os.makedirs(test_cache_dir_via_config, exist_ok=True)
 
-    # UPDATED: historical_cache_dir is now in run_settings.yaml
     (defaults_dir / "run_settings.yaml").write_text(
         f"run_settings:\n  historical_cache_dir: '{test_cache_dir_via_config}'\n  log_level: 'none'\n"
     )
@@ -94,15 +94,15 @@ class TestLoggingHelpers:
         assert "Index is not UTC-aware." in content
 
 
-@patch('src.data.data_downloader_manager.load_configs_for_data_management')
-@patch('src.data.data_downloader_manager._log_deletion_event')
-@patch('src.data.data_downloader_manager.os.path.exists')
-@patch('src.data.data_downloader_manager.os.path.getsize')
-@patch('src.data.data_downloader_manager.os.remove')
-@patch('src.data.data_downloader_manager.pd.read_parquet')
-@patch('src.data.data_downloader_manager.get_data_path_for_day')
-@patch('src.data.data_downloader_manager.fetch_and_cache_tick_data')
-@patch('src.data.data_downloader_manager.validate_daily_data')
+@patch('src.data.data_manager.load_configs_for_data_management')
+@patch('src.data.data_manager._log_deletion_event')
+@patch('src.data.data_manager.os.path.exists')
+@patch('src.data.data_manager.os.path.getsize')
+@patch('src.data.data_manager.os.remove')
+@patch('src.data.data_manager.pd.read_parquet')
+@patch('src.data.data_manager.get_data_path_for_day')
+@patch('src.data.data_manager.fetch_and_cache_tick_data')
+@patch('src.data.data_manager.validate_daily_data')
 class TestDownloadAndManageAggTrades:
 
     def run_manager(self, mock_validate, mock_fetch_ticks, mock_get_data_path,
@@ -113,7 +113,6 @@ class TestDownloadAndManageAggTrades:
                     getsize_behavior=100, read_parquet_behavior=create_dummy_df(),
                     fetch_return=create_dummy_df(), validate_return=(True, "Valid.")):
 
-        # FIXED: Mock configuration now separates run_settings and binance_settings
         mock_load_configs.return_value = {
             "run_settings": {
                 "historical_cache_dir": configured_cache_dir,
@@ -138,7 +137,6 @@ class TestDownloadAndManageAggTrades:
             mock_read_parquet.return_value = read_parquet_behavior
 
         mock_get_data_path.return_value = os.path.join(configured_cache_dir, "dummy_aggtrade_file.parquet")
-
         mock_fetch_ticks.return_value = fetch_return
         mock_validate.return_value = validate_return
 
@@ -159,7 +157,6 @@ class TestDownloadAndManageAggTrades:
                          validate_return=(True, "All checks passed."))
 
         mock_load_configs.assert_called_once()
-        # FIXED: The downloader script now correctly gets cache_dir from config and passes it to utils
         mock_get_data_path.assert_called_with("2023-01-01", "BTCUSDT", data_type="agg_trades", cache_dir=test_cache_dir)
         mock_fetch_ticks.assert_not_called()
         mock_remove.assert_not_called()
@@ -265,15 +262,15 @@ class TestDownloadAndManageAggTrades:
         mock_log_del.assert_called_once_with(mock_get_data_path.return_value, f"Validation failed: {validation_msg}")
 
 
-@patch('src.data.data_downloader_manager.load_configs_for_data_management')
-@patch('src.data.data_downloader_manager._log_deletion_event')
-@patch('src.data.data_downloader_manager.os.path.exists')
-@patch('src.data.data_downloader_manager.os.path.getsize')
-@patch('src.data.data_downloader_manager.os.remove')
-@patch('src.data.data_downloader_manager.pd.read_parquet')
-@patch('src.data.data_downloader_manager.get_data_path_for_day')
-@patch('src.data.data_downloader_manager.fetch_and_cache_kline_data')
-@patch('src.data.data_downloader_manager.validate_daily_data')
+@patch('src.data.data_manager.load_configs_for_data_management')
+@patch('src.data.data_manager._log_deletion_event')
+@patch('src.data.data_manager.os.path.exists')
+@patch('src.data.data_manager.os.path.getsize')
+@patch('src.data.data_manager.os.remove')
+@patch('src.data.data_manager.pd.read_parquet')
+@patch('src.data.data_manager.get_data_path_for_day')
+@patch('src.data.data_manager.fetch_and_cache_kline_data')
+@patch('src.data.data_manager.validate_daily_data')
 class TestDownloadAndManageKlines:
 
     def run_manager_kline(self, mock_validate, mock_fetch_klines, mock_get_data_path,
@@ -284,7 +281,6 @@ class TestDownloadAndManageKlines:
                           getsize_behavior=100, read_parquet_behavior=create_dummy_df(columns=['Open', 'Close']),
                           fetch_return=create_dummy_df(columns=['Open', 'Close']), validate_return=(True, "Valid.")):
 
-        # FIXED: Mock configuration now separates run_settings and binance_settings
         mock_load_configs.return_value = {
             "run_settings": {
                 "historical_cache_dir": configured_cache_dir,
