@@ -116,7 +116,7 @@ def main():
 
     study_name = optimizer_settings.get("study_name", "trading_agent_optimization")
     # UPDATED: Use configurable directory for Optuna studies
-    optuna_studies_dir = optimizer_settings.get("optuna_studies_dir", "optuna_studies/")
+    optuna_studies_dir = optimizer_settings.get("optuna_studies_dir", "optuna")
     db_file = optimizer_settings.get("db_file", "optuna_study.db")
 
     os.makedirs(optuna_studies_dir, exist_ok=True)
