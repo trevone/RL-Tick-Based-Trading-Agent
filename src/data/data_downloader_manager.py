@@ -4,20 +4,15 @@ import argparse
 import os
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-import sys # For flushing print
+import sys
 
-# MODIFIED: Import load_config and merge_configs
-from src.data.utils import (
-    fetch_and_cache_tick_data,
-    get_data_path_for_day,
-    fetch_and_cache_kline_data,
-    # DATA_CACHE_DIR, # No longer using the global constant directly in main functions
-    load_config,      # For loading configuration
-    merge_configs     # For merging configurations
-)
+# --- UPDATED IMPORTS ---
+from src.data.config_loader import load_config
+from src.data.path_manager import get_data_path_for_day
+from src.data.binance_client import fetch_and_cache_tick_data, fetch_and_cache_kline_data
 from src.data.check_tick_cache import validate_daily_data
+# --- END UPDATED IMPORTS ---
 
-# --- Logging for Deleted Files ---
 LOG_DIR_BASE_NAME = "logs"
 DATA_MANAGEMENT_LOG_FILENAME = "data_management.log"
 

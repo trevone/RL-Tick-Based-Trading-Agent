@@ -1,51 +1,41 @@
-# src/agents/hyperparameter_optimization.py
-
 import os
 import optuna
 import pandas as pd
 import numpy as np
 import json
-import yaml
 import traceback
 from datetime import datetime
 
-# Import the train_agent function and utility functions from the new structure
+# --- UPDATED IMPORTS ---
 from src.agents.train_agent import train_agent
-from src.data.utils import load_config, merge_configs, convert_to_native_types
+from src.data.config_loader import load_config, merge_configs, convert_to_native_types
+# --- END UPDATED IMPORTS ---
 
-# --- Flexible Import for TqdmCallback ---
 try:
-    from optuna.callbacks import TqdmCallback  # For Optuna v2.0.0+
+    from optuna.callbacks import TqdmCallback
 except ImportError:
     try:
-        from optuna.integration import TqdmCallback  # Fallback for older Optuna versions
+        from optuna.integration import TqdmCallback
     except ImportError:
-        TqdmCallback = None # Define as None if not found in either location
+        TqdmCallback = None
         print("WARNING: Optuna TqdmCallback not found. Progress bar for HPO will not be available.")
-# --- End Flexible Import ---
 
-
-# --- NEW: Function to load default configurations for optimization ---
 def load_default_configs_for_optimization(config_dir="configs/defaults") -> dict:
-    """Loads default configurations from the specified directory for hyperparameter optimization."""
     default_config_paths = [
         os.path.join(config_dir, "run_settings.yaml"),
         os.path.join(config_dir, "environment.yaml"),
         os.path.join(config_dir, "binance_settings.yaml"),
         os.path.join(config_dir, "evaluation_data.yaml"),
-        os.path.join(config_dir, "hash_keys.yaml"), # Needed for generating unique run IDs
-        os.path.join(config_dir, "hyperparameter_optimization.yaml"), # New settings file for Optuna
-        os.path.join(config_dir, "ppo_params.yaml"), # Include all algo params for potential optimization
+        os.path.join(config_dir, "hash_keys.yaml"),
+        os.path.join(config_dir, "hyperparameter_optimization.yaml"),
+        os.path.join(config_dir, "ppo_params.yaml"),
         os.path.join(config_dir, "sac_params.yaml"),
         os.path.join(config_dir, "ddpg_params.yaml"),
         os.path.join(config_dir, "a2c_params.yaml"),
         os.path.join(config_dir, "recurrent_ppo_params.yaml"),
-        os.path.join(config_dir, "live_trader_settings.yaml"), # Added this as it's in the list of files
+        os.path.join(config_dir, "live_trader_settings.yaml"),
     ]
-
-    # Use the new load_config from src.data.utils which merges multiple files
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
-
 
 def objective(trial: optuna.Trial, base_effective_config: dict) -> float:
     """

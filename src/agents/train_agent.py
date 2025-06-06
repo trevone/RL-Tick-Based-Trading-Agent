@@ -2,14 +2,11 @@
 
 import os
 import json
-import yaml
-import warnings
-from datetime import datetime
 import traceback
-import time # For debug prints around model.learn()
-
+import time
 import pandas as pd
 import numpy as np
+import warnings
 
 # Suppress pandas FutureWarnings related to 'pd.concat'
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
@@ -18,10 +15,9 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 from stable_baselines3 import PPO, SAC, DDPG, A2C
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
-from stable_baselines3.common.utils import get_schedule_fn # For updating LR schedule
 
 try:
     from sb3_contrib import RecurrentPPO
@@ -30,12 +26,13 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
-
 from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
-from src.data.utils import load_config, merge_configs, get_relevant_config_for_hash, generate_config_hash
-from src.data.utils import load_tick_data_for_range, load_kline_data_for_range
-from src.data.utils import convert_to_native_types, DATA_CACHE_DIR
+# --- UPDATED IMPORTS ---
+from src.data.config_loader import load_config, merge_configs, get_relevant_config_for_hash, generate_config_hash, convert_to_native_types
+from src.data.data_loader import load_tick_data_for_range, load_kline_data_for_range
+from src.data.path_manager import DATA_CACHE_DIR
+# --- END UPDATED IMPORTS ---
 
 
 def load_default_configs_for_training(config_dir="configs/defaults") -> dict:
@@ -205,7 +202,7 @@ def train_agent(
 
         current_env_config_for_train = env_config.copy()
         train_monitor_path = os.path.join(log_dir, "train_monitor.csv") if log_to_file else None
-        
+
         vec_env_for_norm = make_vec_env(
             create_env_fn(tick_df_train, kline_df_train, current_env_config_for_train, train_monitor_path),
             n_envs=1, # For now, assuming n_envs=1 for simplicity with VecNormalize loading
@@ -216,7 +213,7 @@ def train_agent(
         traceback.print_exc()
         if vec_env_for_norm: vec_env_for_norm.close()
         return -np.inf
-        
+
     # Initialize or load VecNormalize
     env = None
     current_run_vec_normalize_path = os.path.join(log_dir, "vec_normalize.pkl")
@@ -282,7 +279,7 @@ def train_agent(
                 current_env_config_for_eval['custom_print_render'] = "none"
 
                 eval_monitor_path = os.path.join(log_dir, "eval_monitor.csv") if log_to_file else None
-                
+
                 eval_vec_env_for_norm = make_vec_env(
                     create_env_fn(tick_df_eval, kline_df_eval, current_env_config_for_eval, eval_monitor_path),
                     n_envs=1, seed=np.random.randint(0,10000)
@@ -298,7 +295,7 @@ def train_agent(
                     min_evals=run_settings.get("stop_training_min_evals", 10),
                     verbose=1 if current_log_level != "none" else 0
                 )
-                
+
                 approx_steps_per_train_episode = max(1, len(tick_df_train) - env_config.get("tick_feature_window_size", 50))
                 eval_freq_steps = int(run_settings.get("eval_freq_episodes", 10) * approx_steps_per_train_episode)
                 eval_freq_steps = max(eval_freq_steps, 1)
@@ -341,7 +338,7 @@ def train_agent(
         except Exception as e_eval_pk:
             if current_log_level != "none": print(f"WARNING: Could not parse policy_kwargs string: {e_eval_pk}. Using defaults or none.")
             if "policy_kwargs" in algo_params_for_init: del algo_params_for_init["policy_kwargs"]
-    
+
     model_class_map = {"PPO": PPO, "SAC": SAC, "DDPG": DDPG, "A2C": A2C}
     model_class = None
     if agent_type == "RecurrentPPO":
@@ -372,7 +369,7 @@ def train_agent(
             model_path_to_load_for_retrain = potential_final_model_path
         elif os.path.exists(potential_interrupted_model_path):
             model_path_to_load_for_retrain = potential_interrupted_model_path
-        
+
         if model_path_to_load_for_retrain:
             if current_log_level != "none": print(f"Retraining: Attempting to load model from {model_path_to_load_for_retrain} to continue training.")
             try:
@@ -381,7 +378,7 @@ def train_agent(
                     env=env,
                     device=run_settings.get("device", "auto")
                 )
-                
+
                 if "learning_rate" in algo_params_for_init:
                     new_lr = algo_params_for_init["learning_rate"]
                     try:
@@ -403,7 +400,7 @@ def train_agent(
                 model_loaded_for_retraining = False
         else:
             if current_log_level != "none": print(f"Retraining: No existing model found in {log_dir} to continue from. Initializing a new model.")
-    
+
     if not model_loaded_for_retraining:
         try:
             model = model_class(
@@ -425,11 +422,11 @@ def train_agent(
 
     if current_log_level != "none": print(f"\n--- Starting {agent_type} Training ---")
     final_return_metric = -np.inf
-    
+
     callbacks_list = []
     if eval_callback:
         callbacks_list.append(eval_callback)
-    
+
     if log_to_file and run_settings.get("save_checkpoints", True):
         checkpoint_save_dir = os.path.join(log_dir, "checkpoints")
         os.makedirs(checkpoint_save_dir, exist_ok=True)
@@ -452,7 +449,7 @@ def train_agent(
             print(f"DEBUG TRAIN_AGENT: reset_num_timesteps for learn(): {not model_loaded_for_retraining}")
             print(f"DEBUG TRAIN_AGENT: Callbacks: {callbacks_list}")
             print(f"DEBUG TRAIN_AGENT: Current time: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC")
-        
+
         learn_start_time = time.time()
 
         model.learn(
@@ -475,13 +472,13 @@ def train_agent(
             model.save(final_model_save_path)
             env.save(os.path.join(log_dir, "vec_normalize.pkl"))
             if current_log_level != "none": print(f"Final model and VecNormalize stats saved to {log_dir}")
-        
+
         if eval_callback and hasattr(eval_callback, 'best_mean_reward') and eval_callback.best_mean_reward is not None:
             final_return_metric = float(eval_callback.best_mean_reward)
             if current_log_level != "none": print(f"Best mean evaluation reward: {final_return_metric:.4f}")
         elif not eval_callback and current_log_level != "none":
              print("WARNING: EvalCallback was not used or did not produce a best_mean_reward. Final metric is -inf.")
-        
+
     except KeyboardInterrupt:
         if current_log_level != "none": print("\nTraining interrupted by user.")
         if log_to_file and model is not None and run_settings.get("save_on_interrupt", True):

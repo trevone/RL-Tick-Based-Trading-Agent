@@ -1,11 +1,13 @@
-# read_cache_sample.py
+# scripts/read_cache_sample.py
 import pandas as pd
 import os
 import argparse
 import sys
+import traceback
 
-# Import from the new utils path
-from src.data.utils import get_data_path_for_day, DATA_CACHE_DIR
+# --- UPDATED IMPORTS ---
+from src.data.path_manager import get_data_path_for_day, DATA_CACHE_DIR
+# --- END UPDATED IMPORTS ---
 
 def main():
     parser = argparse.ArgumentParser(description="Read and display a sample of cached data.")

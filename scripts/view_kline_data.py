@@ -1,12 +1,13 @@
-# view_kline_data.py
+# scripts/view_kline_data.py
 import argparse
 import pandas as pd
-import os
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-# Import from the new utils path
-from src.data.utils import fetch_and_cache_kline_data, DATA_CACHE_DIR
+# --- UPDATED IMPORTS ---
+from src.data.binance_client import fetch_and_cache_kline_data
+from src.data.path_manager import DATA_CACHE_DIR
+# --- END UPDATED IMPORTS ---
 
 def main():
     parser = argparse.ArgumentParser(description="View Binance K-line data from cache or fetch.")

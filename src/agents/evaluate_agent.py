@@ -7,40 +7,30 @@ import traceback
 from datetime import datetime, timezone
 
 # --- Plotting Libraries ---
+import matplotlib
+matplotlib.use('Agg') # Use a non-interactive backend BEFORE pyplot is imported
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 # Import Stable Baselines3 algorithms dynamically
 from stable_baselines3 import PPO, SAC, DDPG, A2C
-# For RecurrentPPO (if available and chosen)
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 try:
     from sb3_contrib import RecurrentPPO
     SB3_CONTRIB_AVAILABLE = True
 except ImportError:
     SB3_CONTRIB_AVAILABLE = False
-    # print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
-
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
-
-# Import custom modules from the project's new structure
+# --- UPDATED IMPORTS ---
 from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
-from src.data.utils import (
-    load_config,
-    merge_configs,
-    convert_to_native_types,
-    load_tick_data_for_range,
-    load_kline_data_for_range,
-    resolve_model_path,
-    DATA_CACHE_DIR
-)
+from src.data.config_loader import load_config, merge_configs, convert_to_native_types
+from src.data.data_loader import load_tick_data_for_range, load_kline_data_for_range
+from src.utils import resolve_model_path
+# --- END UPDATED IMPORTS ---
 
-
-# --- Function to load default configurations from files ---
 def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
-    """Loads default configurations from the specified directory for evaluation."""
     default_config_paths = [
         os.path.join(config_dir, "run_settings.yaml"),
         os.path.join(config_dir, "environment.yaml"),
@@ -53,14 +43,11 @@ def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
         os.path.join(config_dir, "a2c_params.yaml"),
         os.path.join(config_dir, "recurrent_ppo_params.yaml"),
     ]
-
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
 
 def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: str, log_dir: str, log_level: str = "normal", title: str = "Agent Performance"):
-    """
-    Plots the price, account balance, and trade actions.
-    """
+    # ... (rest of the function remains unchanged)
     if not trade_history:
         if log_level != "none":
             print("No trade history to plot.")
@@ -106,7 +93,6 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
             min_plot_time -= pd.Timedelta(minutes=5)
             max_plot_time += pd.Timedelta(minutes=5)
             price_data_plot = price_data_plot[(price_data_plot.index >= min_plot_time) & (price_data_plot.index <= max_plot_time)]
-        # If equity_balance_df is empty, plot all available price_data for the period
     else:
         if log_level != "none":
             print("Warning: No price data available for plotting.")
@@ -129,12 +115,10 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
         if log_level != "none":
             print("Note: Equity/balance chart is empty as no relevant trade history was found.")
 
-
     ax2.set_title('Account Equity and Balance')
     ax2.set_xlabel('Time')
     ax2.set_ylabel('Amount ($)')
-
-    # UPDATED: Conditional legend for ax2
+    
     handles, labels = ax2.get_legend_handles_labels()
     if handles:
         ax2.legend()
@@ -284,7 +268,8 @@ def main():
         traceback.print_exc()
         if env_for_model: env_for_model.close()
         return
-
+    
+    # ... (rest of the main function remains unchanged)
     num_eval_episodes = run_settings.get('n_evaluation_episodes', 3)
     if current_log_level != "none": print(f"Starting evaluation for {num_eval_episodes} episodes...")
     all_episodes_rewards, all_episodes_profits_pct = [], []

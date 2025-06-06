@@ -2,19 +2,17 @@
 
 import os
 import json
-import yaml
 import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
 import traceback
-import queue # For managing tick data stream
+import queue
 
 # --- Binance API and WebSocket ---
 try:
     from binance.client import Client
     from binance.websockets import BinanceSocketManager
-    from binance.enums import * # Import ALL_TICKERS for BinanceSocketManager
     BINANCE_CLIENT_AVAILABLE = True
 except ImportError:
     BINANCE_CLIENT_AVAILABLE = False
@@ -23,7 +21,7 @@ except ImportError:
 
 # Import Stable Baselines3 algorithms dynamically
 from stable_baselines3 import PPO, SAC, DDPG, A2C
-# For RecurrentPPO (if available and chosen)
+from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 try:
     from sb3_contrib import RecurrentPPO
     SB3_CONTRIB_AVAILABLE = True
@@ -31,38 +29,28 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available for live trading.")
 
-from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv # Crucial for obs normalization
-
-# Import custom modules from the project's new structure
+# --- UPDATED IMPORTS ---
 from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
-from src.data.utils import (
-    load_config,
-    merge_configs,
-    convert_to_native_types,
-    resolve_model_path,
-    fetch_and_cache_kline_data, # Used for fetching initial kline context
-    load_tick_data_for_range # NEW: Used for initial tick data load
-)
+from src.data.config_loader import load_config, merge_configs, convert_to_native_types
+from src.data.data_loader import load_tick_data_for_range
+from src.data.binance_client import fetch_and_cache_kline_data
+from src.utils import resolve_model_path
+# --- END UPDATED IMPORTS ---
 
-
-# --- NEW: Function to load default configurations for live trading ---
 def load_default_configs_for_live_trading(config_dir="configs/defaults") -> dict:
     """Loads default configurations from the specified directory for live trading."""
     default_config_paths = [
         os.path.join(config_dir, "run_settings.yaml"),
         os.path.join(config_dir, "environment.yaml"),
         os.path.join(config_dir, "binance_settings.yaml"),
-        # os.path.join(config_dir, "live_trader_settings.yaml"), # This file might be missing or not standardized yet
-        os.path.join(config_dir, "hash_keys.yaml"), # Needed for resolve_model_path
-        os.path.join(config_dir, "ppo_params.yaml"), # Include all algo params for hashing to resolve model
+        os.path.join(config_dir, "hash_keys.yaml"),
+        os.path.join(config_dir, "ppo_params.yaml"),
         os.path.join(config_dir, "sac_params.yaml"),
         os.path.join(config_dir, "ddpg_params.yaml"),
         os.path.join(config_dir, "a2c_params.yaml"),
         os.path.join(config_dir, "recurrent_ppo_params.yaml"),
     ]
-    
-    # Use the new load_config from src.data.utils which merges multiple files
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
 class LiveTrader:
@@ -76,58 +64,51 @@ class LiveTrader:
         self.effective_config = load_default_configs_for_live_trading()
         if config_override:
             self.effective_config = merge_configs(self.effective_config, config_override)
-        
+
         self.run_settings = self.effective_config["run_settings"]
         self.env_config = self.effective_config["environment"]
         self.binance_settings = self.effective_config["binance_settings"]
-        self.live_trader_settings = self.effective_config.get("live_trader_settings", {}) # Handle missing live_trader_settings
-        
+        self.live_trader_settings = self.effective_config.get("live_trader_settings", {})
+
         self.agent_type = self.effective_config.get("agent_type", "PPO")
 
-        # Adjust log level for live trading
         self.log_level = self.run_settings.get("log_level", "normal")
-        self.env_config["log_level"] = "none" # Suppress env printing
-        self.env_config["custom_print_render"] = "none" # Suppress env rendering
-        
-        # Determine logging directory for this live run
+        self.env_config["log_level"] = "none"
+        self.env_config["custom_print_render"] = "none"
+
         self.live_run_id = f"live_{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         self.live_log_dir = os.path.join(self.run_settings.get("live_log_dir", "logs/live_trading/"), self.live_run_id)
         os.makedirs(self.live_log_dir, exist_ok=True)
-        
-        # Save effective config
+
         with open(os.path.join(self.live_log_dir, "effective_live_config.json"), "w") as f:
             json.dump(convert_to_native_types(self.effective_config), f, indent=4)
         print(f"Live trading logs will be saved to: {self.live_log_dir}")
         print(f"Agent Type: {self.agent_type}")
 
-
         # 2. Resolve and Load Trained Model
         self.model_load_path, _ = resolve_model_path(self.effective_config, log_level=self.log_level)
         if not self.model_load_path:
             raise ValueError("Could not determine a valid model path for live trading. Exiting.")
-        
-        # Load VecNormalize statistics from the training run's log directory
+
         model_training_run_dir = os.path.dirname(os.path.dirname(self.model_load_path))
         self.vec_normalize_stats_path = os.path.join(model_training_run_dir, "vec_normalize.pkl")
         if not os.path.exists(self.vec_normalize_stats_path):
-            print(f"WARNING: VecNormalize stats not found at {self.vec_normalize_stats_path}. Live observations will NOT be normalized consistently with training. This can lead to poor performance.")
-            self.vec_normalize = None # Will be initialized as new if not found
+            print(f"WARNING: VecNormalize stats not found at {self.vec_normalize_stats_path}. Live observations will NOT be normalized consistently with training.")
+            self.vec_normalize = None
         else:
-            # Create a dummy environment to load VecNormalize stats into
             dummy_base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
             dummy_wrapped_env = FlattenAction(dummy_base_env)
             dummy_vec_env = DummyVecEnv([lambda: dummy_wrapped_env])
-            
-            self.vec_normalize = VecNormalize.load(self.vec_normalize_stats_path, dummy_vec_env) # Load only the stats, will apply to env later
-            self.vec_normalize.training = False # Ensure it's in evaluation mode
-            self.vec_normalize.norm_reward = False # Ensure reward normalization is off
+            self.vec_normalize = VecNormalize.load(self.vec_normalize_stats_path, dummy_vec_env)
+            self.vec_normalize.training = False
+            self.vec_normalize.norm_reward = False
             print(f"VecNormalize statistics loaded from: {self.vec_normalize_stats_path}")
 
-        # --- Binance Client for Order Execution and Historical Data ---
+        # --- Binance Client and WebSocket ---
         self.client = Client(
             self.binance_settings.get("api_key", os.environ.get('BINANCE_API_KEY')),
             self.binance_settings.get("api_secret", os.environ.get('BINANCE_API_SECRET')),
-            tld=self.binance_settings.get("tld", "us"), # 'us' for binance.us or 'com' for binance.com
+            tld=self.binance_settings.get("tld", "us"),
             testnet=self.binance_settings.get("testnet", True)
         )
         if self.binance_settings.get("testnet", True):
@@ -135,15 +116,13 @@ class LiveTrader:
             print("WARNING: Using Binance Testnet for live trading.")
         else:
             print("CAUTION: Using Binance Live/Production environment.")
-        
-        # --- Binance WebSocket for Real-time Tick Data ---
+
         self.bm = BinanceSocketManager(self.client)
-        self.tick_data_queue = queue.Queue() # Queue to store incoming ticks
+        self.tick_data_queue = queue.Queue()
         self.conn_key = self.bm.start_aggtrade_socket(self.run_settings["default_symbol"].lower(), self._process_tick_message)
         self.bm.start()
         print("Binance WebSocket started for aggTrades.")
 
-        # 3. Initialize Live Trading Environment
         self.env = None
         self.current_kline_data = pd.DataFrame()
         self.historical_ticks_for_obs = pd.DataFrame()

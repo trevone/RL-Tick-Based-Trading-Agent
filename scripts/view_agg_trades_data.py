@@ -1,12 +1,14 @@
-# view_agg_trades_data.py
+# scripts/view_agg_trades_data.py
 import argparse
 import pandas as pd
-import os
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-# Import from the new utils path
-from src.data.utils import fetch_continuous_aggregate_trades, DATA_CACHE_DIR
+# --- UPDATED IMPORTS ---
+from src.data.binance_client import fetch_continuous_aggregate_trades
+from src.data.path_manager import DATA_CACHE_DIR
+# --- END UPDATED IMPORTS ---
 
 def main():
     parser = argparse.ArgumentParser(description="View Binance Aggregate Trade data from cache or fetch.")

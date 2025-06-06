@@ -8,9 +8,9 @@ import re
 import traceback
 import time
 
-# --- Configuration ---
-# Use DATA_CACHE_DIR from src.data.utils instead of defining locally
-from src.data.utils import DATA_CACHE_DIR
+# --- UPDATED IMPORTS ---
+from src.data.path_manager import DATA_CACHE_DIR
+# --- END UPDATED IMPORTS ---
 
 # Expected columns and their properties for aggregate trades
 EXPECTED_AGG_TRADES_COLUMNS_INFO = {
