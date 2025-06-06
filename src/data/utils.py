@@ -243,7 +243,7 @@ def fetch_continuous_aggregate_trades(
     symbol: str, start_date_str: str, end_date_str: str,
     cache_dir: str, api_key: str = None, api_secret: str = None,
     testnet: bool = False, cache_file_type: str = "parquet", log_level: str = "normal",
-    api_request_delay_seconds: float = 0.2, pbar_instance = None 
+    api_request_delay_seconds: float = 0.2, pbar_instance = None
 ) -> pd.DataFrame:
 
     _print_fn = pbar_instance.write if pbar_instance else print
@@ -287,11 +287,11 @@ def fetch_continuous_aggregate_trades(
     end_dt = pd.to_datetime(end_date_str, utc=True)
     current_start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
-    
+
     # Use external pbar if provided for its .write method, but manage progress locally for this fetch
     # This local_pbar is for visual feedback of THIS specific fetch operation.
-    local_fetch_pbar = tqdm(total=max(1, end_ms - current_start_ms), 
-                            desc=f"Fetching {symbol} for {daily_file_date_str}", 
+    local_fetch_pbar = tqdm(total=max(1, end_ms - current_start_ms),
+                            desc=f"Fetching {symbol} for {daily_file_date_str}",
                             unit="ms", unit_scale=True, leave=False, # leave=False if pbar_instance is also used by outer loop
                             disable=(log_level == "none")) # Disable if no logging
 
@@ -307,7 +307,7 @@ def fetch_continuous_aggregate_trades(
                 new_start_ms = trades_chunk[-1]['T'] + 1
             else:
                 new_start_ms = chunk_end_ms + 1
-            
+
             local_fetch_pbar.update(new_start_ms - current_start_ms)
             current_start_ms = new_start_ms
             if current_start_ms >= end_ms: break
@@ -323,7 +323,7 @@ def fetch_continuous_aggregate_trades(
             _print_fn(f"Error fetching aggregate trades for {daily_file_date_str}: {e}"); sys.stdout.flush()
             traceback.print_exc()
             break
-    
+
     if local_fetch_pbar.total > local_fetch_pbar.n : local_fetch_pbar.total = local_fetch_pbar.n
     local_fetch_pbar.close()
 
@@ -397,7 +397,7 @@ def fetch_and_cache_tick_data(*args, **kwargs):
 def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str, cache_dir: str = DATA_CACHE_DIR,
                              binance_settings: Dict = None, tick_resample_interval_ms: int = None,
                              log_level: str = "normal") -> pd.DataFrame:
-    
+
     if log_level != "none": print(f"[[load_tick_data_for_range ENTRY]] Log level received: {log_level}"); sys.stdout.flush()
 
     if binance_settings is None: binance_settings = {}
@@ -441,7 +441,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     while current_date_obj <= end_date_obj:
         date_str_for_day = current_date_obj.strftime('%Y-%m-%d')
         _print_fn = pbar_days.write
-        
+
         if log_level != "none": _print_fn(f"[[load_tick_data_for_range DAILY_LOOP]] Day: {date_str_for_day}, Current log_level: {log_level}"); sys.stdout.flush()
 
         if log_level == "detailed": _print_fn(f"\nDEBUG_LOAD_TICK (Daily): --- Processing day: {date_str_for_day} ---"); sys.stdout.flush()
@@ -468,7 +468,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         if df_daily.empty:
             if log_level != "none": _print_fn(f"[[load_tick_data_for_range RAW_CHECK_TRIGGERED]] Resampled empty for {date_str_for_day}. Checking RAW."); sys.stdout.flush()
             if log_level == "detailed": _print_fn(f"DEBUG_LOAD_TICK (Daily): Daily RESAMPLED data for {date_str_for_day} is empty or was not loaded. Attempting to use/fetch RAW."); sys.stdout.flush()
-            
+
             raw_daily_file_path = get_data_path_for_day(date_str_for_day, symbol, data_type="agg_trades", cache_dir=cache_dir)
             df_raw_daily = pd.DataFrame()
 
@@ -558,6 +558,25 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     if not combined_df.empty:
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+
+        # --- START: NEW DATETIME FILTERING LOGIC ---
+        try:
+            # Parse the full start and end datetimes from the input strings
+            start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
+            end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
+
+            # Filter the combined DataFrame to the precise datetime range
+            original_count = len(combined_df)
+            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
+
+            if log_level in ["normal", "detailed"] and original_count > 0:
+                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
+
+        except Exception as e_filter:
+            if log_level != "none":
+                print(f"WARNING: Could not apply precise datetime filter to combined tick data: {e_filter}. Returning daily-aligned data.")
+        # --- END: NEW DATETIME FILTERING LOGIC ---
+
         if log_level == "detailed":
             _print_fn_after_loop(f"DEBUG_LOAD_TICK (Range): Combined all daily tick data. Shape: {combined_df.shape}")
         try:
@@ -666,6 +685,25 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
     if not combined_df.empty:
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+
+        # --- START: NEW DATETIME FILTERING LOGIC ---
+        try:
+            # Parse the full start and end datetimes from the input strings
+            start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
+            end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
+
+            # Filter the combined DataFrame to the precise datetime range
+            original_count = len(combined_df)
+            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
+
+            if log_level in ["normal", "detailed"] and original_count > 0:
+                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
+
+        except Exception as e_filter:
+            if log_level != "none":
+                print(f"WARNING: Could not apply precise datetime filter to combined k-line data: {e_filter}. Returning daily-aligned data.")
+        # --- END: NEW DATETIME FILTERING LOGIC ---
+
         for feat in price_features:
             if feat not in combined_df.columns:
                 if log_level != "none": _print_fn_range(f"Warning: Feature '{feat}' missing in combined kline data. Filling with 0.")
@@ -718,13 +756,13 @@ def convert_to_native_types(data):
 def get_relevant_config_for_hash(effective_config: Dict) -> Dict:
     relevant_config_for_hash = {}
     hash_keys_structure = effective_config.get("hash_config_keys", {})
-    
+
     # Process run_settings if defined in hash_keys
     if "run_settings" in hash_keys_structure and isinstance(hash_keys_structure["run_settings"], list):
         relevant_config_for_hash["run_settings"] = {
             k: effective_config["run_settings"].get(k) for k in hash_keys_structure["run_settings"] if k in effective_config.get("run_settings",{})
         }
-    
+
     if "environment" in hash_keys_structure and isinstance(hash_keys_structure["environment"], list):
         relevant_config_for_hash["environment"] = {
             k: effective_config["environment"].get(k) for k in hash_keys_structure["environment"] if k in effective_config.get("environment",{})
