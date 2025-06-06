@@ -32,6 +32,7 @@ def mock_hpo_config_dir(tmp_path, monkeypatch):
         """
 hyperparameter_optimization:
   study_name: "test_hpo_study"
+  optuna_studies_dir: "test_optuna_studies/"
   db_file: "test_hpo_optuna.db"
   load_if_exists: false
   direction: "maximize"
@@ -80,6 +81,7 @@ def test_load_default_configs_for_optimization(mock_hpo_config_dir):
     assert "hyperparameter_optimization" in loaded_config
     assert loaded_config["agent_type"] == "PPO"
     assert loaded_config["hyperparameter_optimization"]["study_name"] == "test_hpo_study"
+    assert loaded_config["hyperparameter_optimization"]["optuna_studies_dir"] == "test_optuna_studies/"
     assert loaded_config["ppo_params"]["n_steps"] == 2048
 
 
@@ -207,18 +209,30 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
     """Test the main HPO orchestration logic."""
     test_study_name = "test_hpo_study_main_direct"
     test_db_file = "test_main_optuna_direct.db"
+    # --- Start Fix ---
+    test_studies_dir = "my_test_studies/"
     n_trials_from_config = 2
 
     mock_loaded_config = {
         "agent_type": "PPO",
         "hyperparameter_optimization": {
-            "study_name": test_study_name, "db_file": test_db_file, "load_if_exists": False,
-            "direction": "maximize", "n_trials": n_trials_from_config, "timeout_seconds": None,
-            "sampler_type": "TPESampler", "seed": 123, "use_pruner": True,
-            "pruner_n_startup_trials": 1, "pruner_n_warmup_steps": 0, "pruner_interval_steps": 1,
+            "study_name": test_study_name,
+            "optuna_studies_dir": test_studies_dir, # Provide the configurable dir
+            "db_file": test_db_file,
+            "load_if_exists": False,
+            "direction": "maximize",
+            "n_trials": n_trials_from_config,
+            "timeout_seconds": None,
+            "sampler_type": "TPESampler",
+            "seed": 123,
+            "use_pruner": True,
+            "pruner_n_startup_trials": 1,
+            "pruner_n_warmup_steps": 0,
+            "pruner_interval_steps": 1,
         },
         "run_settings": {"log_level": "normal"}
     }
+    # --- End Fix ---
     mock_load_configs.return_value = mock_loaded_config
 
     mock_study_instance = MagicMock(spec=optuna.study.Study)
@@ -237,9 +251,12 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
         create_study_call_kwargs = mock_create_study.call_args.kwargs
         assert create_study_call_kwargs['study_name'] == test_study_name
 
-        expected_relative_db_path_for_arg = os.path.join("optuna", test_db_file)
+        # --- Start Fix ---
+        # Assert against the configurable directory
+        expected_relative_db_path_for_arg = os.path.join(test_studies_dir, test_db_file)
         expected_storage_url_arg_string = f"sqlite:///{expected_relative_db_path_for_arg}"
         assert create_study_call_kwargs['storage'] == expected_storage_url_arg_string
+        # --- End Fix ---
         
         assert create_study_call_kwargs['load_if_exists'] is False
         assert create_study_call_kwargs['direction'] == "maximize"
@@ -250,10 +267,16 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
         optimize_call_kwargs = mock_study_instance.optimize.call_args.kwargs
         assert optimize_call_kwargs['n_trials'] == n_trials_from_config
         assert optimize_call_kwargs['timeout'] is None
-        assert optimize_call_kwargs['callbacks'] is None
+        # Check that TqdmCallback is added
+        assert optimize_call_kwargs['callbacks'] is not None
+        assert any(isinstance(c, optuna.integration.TqdmCallback) for c in optimize_call_kwargs['callbacks'])
+
 
         expected_save_filename = f"best_hyperparameters_{test_study_name}.json"
-        expected_relative_save_path = os.path.join("optuna", expected_save_filename)
+        # --- Start Fix ---
+        # Assert against the configurable directory
+        expected_relative_save_path = os.path.join(test_studies_dir, expected_save_filename)
+        # --- End Fix ---
         
         mock_builtin_open_file.assert_any_call(expected_relative_save_path, 'w')
         

@@ -17,4 +17,7 @@ train_agent.txt
 todo
 evaluate_agent.txt
 optuna_studies/
+optuna/
 configs/config.basic.yaml
+optuna/optuna_study.db
+todo.md
