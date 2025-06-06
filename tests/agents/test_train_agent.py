@@ -20,7 +20,6 @@ def mock_config_dir(tmp_path):
     defaults_dir = cfg_dir / "defaults"
     defaults_dir.mkdir()
 
-    # FIX: Use multiline strings to ensure valid YAML formatting.
     (defaults_dir / "run_settings.yaml").write_text(f"""
 run_settings:
   log_dir_base: '{str(tmp_path / 'test_logs')}/'
@@ -56,17 +55,33 @@ sac_params:
   total_timesteps: 50
   buffer_size: 10000
 """)
+    (defaults_dir / "a2c_params.yaml").write_text("""
+a2c_params:
+  learning_rate: 0.0007
+  total_timesteps: 80
+  n_steps: 5
+""")
+    # ADDED: ddpg_params.yaml for the new test
+    (defaults_dir / "ddpg_params.yaml").write_text("""
+ddpg_params:
+  learning_rate: 0.0001
+  total_timesteps: 90
+  buffer_size: 50000
+""")
     (defaults_dir / "binance_settings.yaml").write_text("""
 binance_settings:
   testnet: true
 """)
     (defaults_dir / "evaluation_data.yaml").write_text("# This file is empty\n")
+    # ADDED: DDPG to hash_keys
     (defaults_dir / "hash_keys.yaml").write_text("""
 hash_config_keys:
   environment: ['kline_window_size', 'tick_resample_interval_ms']
   agent_params:
     PPO: ['learning_rate']
     SAC: ['learning_rate', 'buffer_size']
+    A2C: ['learning_rate', 'n_steps']
+    DDPG: ['learning_rate', 'buffer_size']
   run_settings: ['default_symbol']
 """)
 
@@ -160,6 +175,39 @@ def test_train_agent_sac_setup(mock_config_dir, mock_data_loader, mock_sb3_model
     mock_sb3_models["SAC"].return_value.learn.assert_called_once()
     learn_args, learn_kwargs = mock_sb3_models["SAC"].return_value.learn.call_args
     assert learn_kwargs['total_timesteps'] == 50
+
+def test_train_agent_a2c_setup(mock_config_dir, mock_data_loader, mock_sb3_models):
+    """Test that train_agent sets up A2C correctly with an override."""
+    with open(os.path.join(mock_config_dir, "config.yaml"), 'w') as f:
+        f.write("agent_type: 'A2C'\n")
+    
+    final_metric = train_agent(log_to_file=False) 
+    
+    assert final_metric == -np.inf
+    mock_sb3_models["A2C"].assert_called_once()
+    args, kwargs = mock_sb3_models["A2C"].call_args
+    assert kwargs['learning_rate'] == 0.0007
+    assert kwargs['n_steps'] == 5
+    mock_sb3_models["A2C"].return_value.learn.assert_called_once()
+    learn_args, learn_kwargs = mock_sb3_models["A2C"].return_value.learn.call_args
+    assert learn_kwargs['total_timesteps'] == 80
+
+# NEW TEST FOR DDPG
+def test_train_agent_ddpg_setup(mock_config_dir, mock_data_loader, mock_sb3_models):
+    """Test that train_agent sets up DDPG correctly with an override."""
+    with open(os.path.join(mock_config_dir, "config.yaml"), 'w') as f:
+        f.write("agent_type: 'DDPG'\n")
+    
+    final_metric = train_agent(log_to_file=False) 
+    
+    assert final_metric == -np.inf
+    mock_sb3_models["DDPG"].assert_called_once()
+    args, kwargs = mock_sb3_models["DDPG"].call_args
+    assert kwargs['learning_rate'] == 0.0001
+    assert kwargs['buffer_size'] == 50000
+    mock_sb3_models["DDPG"].return_value.learn.assert_called_once()
+    learn_args, learn_kwargs = mock_sb3_models["DDPG"].return_value.learn.call_args
+    assert learn_kwargs['total_timesteps'] == 90
 
 def test_train_agent_eval_callback_creation(mock_config_dir, mock_data_loader, mock_sb3_models, tmp_path):
     """Test that EvalCallback is set up and its result is returned by train_agent if log_to_file=True."""
