@@ -310,23 +310,6 @@ ppo_params:
 #    Configuration for fetching historical market data from Binance (REST API).
 #    Used by `utils.py` for training and evaluation data preparation.
 binance_settings:
-  # Default trading pair symbol (e.g., "BTCUSDT", "ETHUSDT").
-  default_symbol: "BTCUSDT"
-
-  # Interval for K-line data (e.g., "1m", "5m", "1h", "1d", "1w", etc.).
-  # Must be a valid Binance interval.
-  historical_interval: "1h"
-
-  # Local directory where fetched historical data (K-lines and ticks) will be cached.
-  # This prevents re-downloading data on subsequent runs.
-  historical_cache_dir: "./binance_data_cache/"
-
-  # Start date and time for fetching historical training data (YYYY-MM-DD HH:MM:SS).
-  # This applies to both K-line and tick data.
-  start_date_train: "2024-01-01 00:00:00"
-  # End date and time for fetching historical training data (YYYY-MM-DD HH:MM:SS, inclusive).
-  end_date_train: "2024-01-03 23:59:59"
-
   # Your Binance API Key. It's highly recommended to use environment variables
   # (e.g., `BINANCE_API_KEY`) and set this to `null` or omit it in the config file.
   api_key: YOUR_API_KEY_HERE # REMEMBER TO REPLACE THIS OR USE ENV VARS
@@ -341,11 +324,6 @@ binance_settings:
   # Delay (in seconds) between consecutive REST API requests.
   # Helps to avoid hitting Binance API rate limits.
   api_request_delay_seconds: 0.2
-
-  # File format for caching historical data.
-  # "parquet" is generally recommended for performance and smaller file sizes.
-  # Options: "parquet", "csv".
-  cache_file_type: "parquet"
 
 
 # 5. BINANCE WEBSOCKET SETTINGS

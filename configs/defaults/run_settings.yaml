@@ -22,7 +22,7 @@ run_settings:
   # --- Data and Symbol Settings (Moved from binance_settings) ---
   default_symbol: "BTCUSDT"           # The default trading pair for data fetching
   historical_interval: "1h"           # Default K-line interval for historical data (e.g., '1m', '15m', '30m', '1h')
-  historical_cache_dir: "data_cache/" # Directory to store cached historical data (relative to project root)
+  historical_cache_dir: "data/"       # Directory to store cached historical data (relative to project root)
   
   # --- Training Period (Moved from binance_settings) ---
   start_date_train: "2025-01-01 00:00:00" # Start datetime for training data (YYYY-MM-DD HH:MM:SS)

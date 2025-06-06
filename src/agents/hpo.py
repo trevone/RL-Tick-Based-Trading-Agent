@@ -117,7 +117,7 @@ def main():
     study_name = optimizer_settings.get("study_name", "trading_agent_optimization")
     db_file = optimizer_settings.get("db_file", "optuna_study.db")
 
-    optuna_studies_dir = "optuna_studies"
+    optuna_studies_dir = "optuna"
     os.makedirs(optuna_studies_dir, exist_ok=True)
     optuna_study_db_path = os.path.join(optuna_studies_dir, db_file)
     storage_url = f"sqlite:///{optuna_study_db_path}"
