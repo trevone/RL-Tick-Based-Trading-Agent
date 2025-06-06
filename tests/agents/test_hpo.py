@@ -265,7 +265,7 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
         assert optimize_call_kwargs['timeout'] is None
         
         # Check that TqdmCallback is added if available, otherwise callbacks are None
-        if TqdmCallback:
+        if TqdmCallback and mock_loaded_config["run_settings"]["log_level"] != "none":
             assert optimize_call_kwargs['callbacks'] is not None
             assert any(isinstance(cb, TqdmCallback) for cb in optimize_call_kwargs['callbacks'])
         else:

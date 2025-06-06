@@ -23,11 +23,11 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
 
 # --- UPDATED IMPORTS ---
-from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
 from src.data.config_loader import load_config, merge_configs, convert_to_native_types
 from src.data.data_loader import load_tick_data_for_range, load_kline_data_for_range
 from src.utils import resolve_model_path
+from src.environments.env_loader import load_environments # <-- IMPORT THE NEW LOADER
 # --- END UPDATED IMPORTS ---
 
 def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
@@ -146,6 +146,15 @@ def main():
     run_settings = effective_eval_config.get("run_settings", {})
     current_log_level = run_settings.get("log_level", "normal")
     agent_type = effective_eval_config.get("agent_type", "PPO")
+    
+    # --- NEW: Get env_type and load available environments ---
+    env_type = run_settings.get("env_type", "simple")
+    available_envs = load_environments()
+    env_class = available_envs.get(env_type)
+    if env_class is None:
+        raise ValueError(f"Environment type '{env_type}' not found. Available: {list(available_envs.keys())}")
+    print(f">>> Evaluating with Environment: {env_class.__name__} (type: '{env_type}') <<<")
+    # --- END NEW ---
 
     eval_env_config_for_instance = effective_eval_config["environment"].copy()
     eval_env_config_for_instance["log_level"] = "none"
@@ -228,7 +237,8 @@ def main():
 
     env_for_model = None
     try:
-        base_eval_env = SimpleTradingEnv(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=eval_env_config_for_instance)
+        # Use the dynamically loaded env_class
+        base_eval_env = env_class(tick_df=eval_tick_df.copy(), kline_df_with_ta=eval_kline_df.copy(), config=eval_env_config_for_instance)
         wrapped_eval_env = FlattenAction(base_eval_env)
         monitored_single_eval_env = Monitor(wrapped_eval_env, filename=os.path.join(eval_log_dir, "eval_monitor.csv"), allow_early_resets=True)
         vec_env = DummyVecEnv([lambda: monitored_single_eval_env])
@@ -288,7 +298,7 @@ def main():
                 monitor_env = env_for_model.venv.envs[0]
                 if hasattr(monitor_env, 'env') and isinstance(monitor_env.env, FlattenAction):
                     flatten_action_env = monitor_env.env
-                    if hasattr(flatten_action_env, 'env') and isinstance(flatten_action_env.env, SimpleTradingEnv):
+                    if hasattr(flatten_action_env, 'env'): # Check if it has the final env attribute
                          actual_base_env = flatten_action_env.env
         except AttributeError:
             if current_log_level != "none":

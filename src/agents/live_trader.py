@@ -30,12 +30,12 @@ except ImportError:
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available for live trading.")
 
 # --- UPDATED IMPORTS ---
-from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
 from src.data.config_loader import load_config, merge_configs, convert_to_native_types
 from src.data.data_loader import load_tick_data_for_range
 from src.data.binance_client import fetch_and_cache_kline_data
 from src.utils import resolve_model_path
+from src.environments.env_loader import load_environments
 # --- END UPDATED IMPORTS ---
 
 def load_default_configs_for_live_trading(config_dir="configs/defaults") -> dict:
@@ -72,6 +72,15 @@ class LiveTrader:
 
         self.agent_type = self.effective_config.get("agent_type", "PPO")
 
+        # --- NEW: Get env_type and load available environments ---
+        self.env_type = self.run_settings.get("env_type", "simple")
+        self.available_envs = load_environments()
+        self.env_class = self.available_envs.get(self.env_type)
+        if self.env_class is None:
+            raise ValueError(f"Environment type '{self.env_type}' not found. Available: {list(self.available_envs.keys())}")
+        print(f">>> Live Trader using Environment: {self.env_class.__name__} (type: '{self.env_type}') <<<")
+        # --- END NEW ---
+
         self.log_level = self.run_settings.get("log_level", "normal")
         self.env_config["log_level"] = "none"
         self.env_config["custom_print_render"] = "none"
@@ -96,7 +105,8 @@ class LiveTrader:
             print(f"WARNING: VecNormalize stats not found at {self.vec_normalize_stats_path}. Live observations will NOT be normalized consistently with training.")
             self.vec_normalize = None
         else:
-            dummy_base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
+            # Use the dynamically loaded env_class for the dummy env
+            dummy_base_env = self.env_class(pd.DataFrame(), pd.DataFrame(), self.env_config)
             dummy_wrapped_env = FlattenAction(dummy_base_env)
             dummy_vec_env = DummyVecEnv([lambda: dummy_wrapped_env])
             self.vec_normalize = VecNormalize.load(self.vec_normalize_stats_path, dummy_vec_env)
@@ -147,7 +157,7 @@ class LiveTrader:
             if self.vec_normalize:
                 # Re-wrap the base environment with VecNormalize, passing the loaded stats
                 # This creates a new VecNormalize instance with the loaded stats
-                base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
+                base_env = self.env_class(pd.DataFrame(), pd.DataFrame(), self.env_config)
                 wrapped_env = FlattenAction(base_env)
                 vec_wrapped_env = DummyVecEnv([lambda: wrapped_env]) # Wrap in DummyVecEnv
                 
@@ -162,7 +172,7 @@ class LiveTrader:
                 print("Model env set with loaded VecNormalize.")
             else:
                 # If no VecNormalize stats were loaded, create a simple non-normalized env
-                base_env = SimpleTradingEnv(pd.DataFrame(), pd.DataFrame(), self.env_config)
+                base_env = self.env_class(pd.DataFrame(), pd.DataFrame(), self.env_config)
                 self.env = FlattenAction(base_env) # Just the FlattenAction wrapper
                 # For live trading without VecNormalize, it's ok for the model to use the raw env
                 self.model.set_env(self.env)
@@ -334,7 +344,7 @@ class LiveTrader:
         order_response = None
         
         if isinstance(self.env, VecNormalize):
-            base_env_instance = self.env.venv.envs[0].env.env
+            base_env_instance = self.env.venv.envs[0].env.env.env
         else:
             base_env_instance = self.env.env
 

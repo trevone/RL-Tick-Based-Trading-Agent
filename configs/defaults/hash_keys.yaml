@@ -2,6 +2,7 @@
 hash_config_keys:
   # Keys from the 'run_settings' section to include in the run hash.
   run_settings:
+    - env_type
     - default_symbol
     - historical_interval
     - start_date_train

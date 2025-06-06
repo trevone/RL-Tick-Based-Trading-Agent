@@ -2,7 +2,7 @@
 # Settings for Optuna hyperparameter optimization
 hyperparameter_optimization:
   study_name: "tick_trading_agent_optimization" # Name of the Optuna study
-  optuna_studies_dir: "optuna/"       # NEW: Base directory for Optuna study files (DB, logs)
+  optuna_studies_dir: "optuna_studies"           # Directory for study results and logs
   db_file: "optuna_study.db"                   # SQLite database file for the study results
   load_if_exists: True                        # Load existing study if it exists
   direction: "maximize"                       # Direction of optimization: "maximize" or "minimize"

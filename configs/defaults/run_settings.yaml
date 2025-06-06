@@ -1,5 +1,6 @@
 # configs/defaults/run_settings.yaml
 run_settings:
+  env_type: "simple"                  # Environment to use. Options: "simple", or any filename in src/environments/experiments/
   log_level: "normal"                 # Level of console logging: "none", "normal", "detailed"
   log_dir_base: "logs/"               # Base directory for all training logs (relative to project root)
   eval_log_dir: "logs/evaluation/"    # Base directory for evaluation run logs (relative to project root)

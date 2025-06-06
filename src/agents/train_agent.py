@@ -26,12 +26,12 @@ except ImportError:
     SB3_CONTRIB_AVAILABLE = False
     print("WARNING: sb3_contrib (for RecurrentPPO) not found. RecurrentPPO will not be available.")
 
-from src.environments.base_env import SimpleTradingEnv, DEFAULT_ENV_CONFIG
 from src.environments.custom_wrappers import FlattenAction
 # --- UPDATED IMPORTS ---
 from src.data.config_loader import load_config, merge_configs, get_relevant_config_for_hash, generate_config_hash, convert_to_native_types
 from src.data.data_loader import load_tick_data_for_range, load_kline_data_for_range
 from src.data.path_manager import DATA_CACHE_DIR
+from src.environments.env_loader import load_environments # <-- IMPORT THE NEW LOADER
 # --- END UPDATED IMPORTS ---
 
 
@@ -87,6 +87,12 @@ def train_agent(
     binance_settings = effective_config["binance_settings"]
     agent_type = effective_config.get("agent_type", "PPO")
     algo_params = effective_config.get(f"{agent_type.lower()}_params", {})
+
+    # --- NEW: Get the environment type from config ---
+    env_type = run_settings.get("env_type", "simple") # Default to "simple"
+
+    # --- NEW: Dynamically load all available environments ---
+    available_envs = load_environments()
 
     current_log_level = run_settings.get("log_level", "normal")
     if not log_to_file:
@@ -194,7 +200,19 @@ def train_agent(
     try:
         def create_env_fn(tick_data: pd.DataFrame, kline_data: pd.DataFrame, env_config_dict: dict, monitor_filepath: str = None):
             def _init_env():
-                base_env = SimpleTradingEnv(tick_df=tick_data.copy(), kline_df_with_ta=kline_data.copy(), config=env_config_dict)
+                
+                # --- NEW: Look up the environment class from our dictionary ---
+                env_class = available_envs.get(env_type)
+
+                if env_class is None:
+                    raise ValueError(
+                        f"Environment type '{env_type}' not found. "
+                        f"Available environments are: {list(available_envs.keys())}"
+                    )
+                
+                print(f">>> Using Environment: {env_class.__name__} (type: '{env_type}') <<<")
+                
+                base_env = env_class(tick_df=tick_data.copy(), kline_df_with_ta=kline_data.copy(), config=env_config_dict)
                 wrapped_env = FlattenAction(base_env)
                 monitored_env = Monitor(wrapped_env, filename=monitor_filepath, allow_early_resets=True)
                 return monitored_env

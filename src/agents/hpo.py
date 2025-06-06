@@ -1,3 +1,4 @@
+# src/agents/hpo.py
 import os
 import optuna
 import pandas as pd
@@ -115,10 +116,10 @@ def main():
     run_settings = base_effective_config.get("run_settings", {}) # For TqdmCallback condition
 
     study_name = optimizer_settings.get("study_name", "trading_agent_optimization")
-    # UPDATED: Use configurable directory for Optuna studies
-    optuna_studies_dir = optimizer_settings.get("optuna_studies_dir", "optuna")
     db_file = optimizer_settings.get("db_file", "optuna_study.db")
-
+    
+    # Use configurable directory for Optuna studies
+    optuna_studies_dir = optimizer_settings.get("optuna_studies_dir", "optuna_studies")
     os.makedirs(optuna_studies_dir, exist_ok=True)
     optuna_study_db_path = os.path.join(optuna_studies_dir, db_file)
     storage_url = f"sqlite:///{optuna_study_db_path}"
@@ -184,7 +185,6 @@ def main():
             for key, value in study.best_trial.params.items():
                 print(f"    {key}: {value}")
 
-            # UPDATED: Use configurable directory for saving best params
             best_params_path = os.path.join(optuna_studies_dir, f"best_hyperparameters_{study_name}.json")
             try:
                 with open(best_params_path, 'w') as f:
