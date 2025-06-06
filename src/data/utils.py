@@ -356,7 +356,10 @@ def fetch_continuous_aggregate_trades(
 def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades",
                           interval: str = None, price_features_to_add: list = None,
                           cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None) -> str:
-    os.makedirs(cache_dir, exist_ok=True)
+    # Create the symbol-specific subdirectory
+    symbol_cache_dir = os.path.join(cache_dir, symbol)
+    os.makedirs(symbol_cache_dir, exist_ok=True)
+
     if data_type == "agg_trades":
         filename_prefix = "bn_aggtrades"
         resample_suffix = f"_R{resample_interval_ms}ms" if resample_interval_ms else ""
@@ -372,7 +375,8 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
         safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}{sorted_features_str}.parquet"
     else:
         raise ValueError(f"Unsupported data_type: {data_type}. Must be 'agg_trades' or 'kline'.")
-    return os.path.join(cache_dir, safe_filename)
+    # Join with the new symbol-specific directory
+    return os.path.join(symbol_cache_dir, safe_filename)
 
 def _generate_data_config_hash_key(params: dict, length: int = 10) -> str:
     if 'price_features' in params and isinstance(params['price_features'], list):
@@ -382,7 +386,10 @@ def _generate_data_config_hash_key(params: dict, length: int = 10) -> str:
 
 def _get_range_cache_path(symbol: str, start_date_str: str, end_date_str: str, data_type_suffix: str,
                           cache_config_params: dict, cache_dir: str = DATA_CACHE_DIR) -> str:
-    range_cache_dir = os.path.join(cache_dir, RANGE_CACHE_SUBDIR)
+    # Create the symbol-specific subdirectory first
+    symbol_cache_dir = os.path.join(cache_dir, symbol)
+    # Then create the range_cache subdir inside the symbol's dir
+    range_cache_dir = os.path.join(symbol_cache_dir, RANGE_CACHE_SUBDIR)
     os.makedirs(range_cache_dir, exist_ok=True)
     config_hash = _generate_data_config_hash_key(cache_config_params)
     safe_start = start_date_str.replace(" ", "_").replace(":", "")
@@ -559,7 +566,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
 
-        # --- START: NEW DATETIME FILTERING LOGIC ---
+        # --- START: DATETIME FILTERING LOGIC ---
         try:
             # Parse the full start and end datetimes from the input strings
             start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
@@ -575,7 +582,7 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         except Exception as e_filter:
             if log_level != "none":
                 print(f"WARNING: Could not apply precise datetime filter to combined tick data: {e_filter}. Returning daily-aligned data.")
-        # --- END: NEW DATETIME FILTERING LOGIC ---
+        # --- END: DATETIME FILTERING LOGIC ---
 
         if log_level == "detailed":
             _print_fn_after_loop(f"DEBUG_LOAD_TICK (Range): Combined all daily tick data. Shape: {combined_df.shape}")
@@ -686,7 +693,7 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
 
-        # --- START: NEW DATETIME FILTERING LOGIC ---
+        # --- START: DATETIME FILTERING LOGIC ---
         try:
             # Parse the full start and end datetimes from the input strings
             start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
@@ -702,7 +709,7 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         except Exception as e_filter:
             if log_level != "none":
                 print(f"WARNING: Could not apply precise datetime filter to combined k-line data: {e_filter}. Returning daily-aligned data.")
-        # --- END: NEW DATETIME FILTERING LOGIC ---
+        # --- END: DATETIME FILTERING LOGIC ---
 
         for feat in price_features:
             if feat not in combined_df.columns:
