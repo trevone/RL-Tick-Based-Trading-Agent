@@ -237,7 +237,7 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
         create_study_call_kwargs = mock_create_study.call_args.kwargs
         assert create_study_call_kwargs['study_name'] == test_study_name
 
-        expected_relative_db_path_for_arg = os.path.join("optuna_studies", test_db_file)
+        expected_relative_db_path_for_arg = os.path.join("optuna", test_db_file)
         expected_storage_url_arg_string = f"sqlite:///{expected_relative_db_path_for_arg}"
         assert create_study_call_kwargs['storage'] == expected_storage_url_arg_string
         
@@ -253,7 +253,7 @@ def test_hpo_main_calls(mock_json_dump, mock_builtin_open_file, mock_create_stud
         assert optimize_call_kwargs['callbacks'] is None
 
         expected_save_filename = f"best_hyperparameters_{test_study_name}.json"
-        expected_relative_save_path = os.path.join("optuna_studies", expected_save_filename)
+        expected_relative_save_path = os.path.join("optuna", expected_save_filename)
         
         mock_builtin_open_file.assert_any_call(expected_relative_save_path, 'w')
         
