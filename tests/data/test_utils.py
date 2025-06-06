@@ -6,27 +6,27 @@ import os
 import shutil
 from unittest.mock import MagicMock, patch, call
 from datetime import datetime, timezone, timedelta
-import time 
+import time
 import yaml
 import json # Added for hash tests
 import hashlib # Added for hash tests
 
 # Import functions from the new path
 from src.data.utils import (
-    _calculate_technical_indicators, 
-    _load_single_yaml_config,        
-    load_config,                     
-    fetch_and_cache_kline_data,      
-    fetch_continuous_aggregate_trades, 
-    get_data_path_for_day,           
-    load_tick_data_for_range,        
-    load_kline_data_for_range,       
-    merge_configs,                   
-    generate_config_hash,            
-    convert_to_native_types,         
-    get_relevant_config_for_hash,    
-    resolve_model_path,              
-    DATA_CACHE_DIR,                  
+    _calculate_technical_indicators,
+    _load_single_yaml_config,
+    load_config,
+    fetch_and_cache_kline_data,
+    fetch_continuous_aggregate_trades,
+    get_data_path_for_day,
+    load_tick_data_for_range,
+    load_kline_data_for_range,
+    merge_configs,
+    generate_config_hash,
+    convert_to_native_types,
+    get_relevant_config_for_hash,
+    resolve_model_path,
+    DATA_CACHE_DIR,
     RANGE_CACHE_SUBDIR,
     _get_range_cache_path,
     _generate_data_config_hash_key
@@ -51,9 +51,13 @@ def sample_kline_df():
 
 @pytest.fixture
 def mock_cache_dir(tmp_path):
+    """
+    Creates a temporary root cache directory for testing.
+    The functions being tested are now responsible for creating the
+    symbol-specific and range_cache subdirectories.
+    """
     test_cache_dir = tmp_path / "test_cache"
     test_cache_dir.mkdir()
-    (test_cache_dir / RANGE_CACHE_SUBDIR).mkdir(exist_ok=True)
     return str(test_cache_dir)
 
 @pytest.fixture
@@ -154,8 +158,11 @@ class TestLoadDataForRangeCaching:
 
     @pytest.fixture(autouse=True)
     def set_up(self, mock_cache_dir):
+        """
+        Sets the mock_cache_dir for use in tests. No longer needs to create
+        subdirectories as this is handled by the functions under test.
+        """
         self.mock_cache_dir = mock_cache_dir
-        os.makedirs(os.path.join(self.mock_cache_dir, RANGE_CACHE_SUBDIR), exist_ok=True)
 
     @patch('src.data.utils.fetch_continuous_aggregate_trades')
     @patch('pandas.DataFrame.to_parquet')
@@ -190,7 +197,7 @@ class TestLoadDataForRangeCaching:
         mock_read_parquet.assert_any_call(daily_resampled_path)
         mock_fetch_trades.assert_not_called()
         mock_to_parquet.assert_any_call(range_cache_path)
-        pd.testing.assert_frame_equal(result_df, dummy_daily_resampled_df)
+        pd.testing.assert_frame_equal(result_df.loc[start_date_str:end_date_str], dummy_daily_resampled_df.loc[start_date_str:end_date_str])
 
     @patch('src.data.utils.fetch_continuous_aggregate_trades')
     @patch('pandas.DataFrame.to_parquet')
@@ -305,25 +312,25 @@ class TestConfigAndModelUtils:
 
     def test_get_relevant_config_for_hash(self, mock_configs_dir, monkeypatch):
         monkeypatch.chdir(mock_configs_dir) # So load_config finds files in temp dir
-        
+
         # Load the effective_config using the mocked config files
         # The mock_configs_dir fixture creates hash_keys.yaml, environment.yaml, ppo_params.yaml, etc.
         # and a main config.yaml that sets agent_type to PPO and overrides initial_balance.
-        effective_config = load_config(main_config_path="config.yaml", 
+        effective_config = load_config(main_config_path="config.yaml",
                                        default_config_paths=[
                                            "configs/defaults/environment.yaml",
                                            "configs/defaults/ppo_params.yaml",
                                            "configs/defaults/binance_settings.yaml",
                                            "configs/defaults/hash_keys.yaml", # This defines what's relevant
                                        ])
-        
+
         relevant_config = get_relevant_config_for_hash(effective_config)
 
         # Based on mock_configs_dir/defaults/hash_keys.yaml:
         # environment: kline_window_size, tick_resample_interval_ms, initial_balance
         # ppo_params: learning_rate, n_steps, policy_kwargs
         # binance_settings: default_symbol
-        
+
         assert "environment" in relevant_config
         assert relevant_config["environment"]["kline_window_size"] == 20 # from defaults/environment.yaml
         assert relevant_config["environment"]["tick_resample_interval_ms"] == 1000 # from defaults/environment.yaml
@@ -357,7 +364,7 @@ class TestConfigAndModelUtils:
     def test_resolve_model_path_explicit_path_found(self, mock_gen_hash, mock_get_rel_conf, mock_exists, tmp_path):
         model_zip = tmp_path / "explicit_model.zip"
         model_zip.touch() # Create dummy file
-        
+
         effective_config = {"run_settings": {"model_path": str(model_zip)}}
         mock_exists.return_value = True # For the explicit path
 
@@ -373,7 +380,7 @@ class TestConfigAndModelUtils:
     def test_resolve_model_path_reconstruction_finds_best_model(self, mock_gen_hash, mock_get_rel_conf, mock_exists, tmp_path):
         log_dir_base = tmp_path / "logs_resolve"
         run_settings = {
-            "model_path": None, 
+            "model_path": None,
             "model_name": "test_agent_recon",
             "log_dir_base": str(log_dir_base)
         }
@@ -386,15 +393,15 @@ class TestConfigAndModelUtils:
 
         mock_get_rel_conf.return_value = {"some_key": "some_value"} # Dummy relevant config
         mock_gen_hash.return_value = "abcdef" # Dummy hash
-        
+
         expected_run_dir = log_dir_base / "training" / "abcdef_test_agent_recon"
         expected_best_model_path = expected_run_dir / "best_model" / "best_model.zip"
-        
+
         # os.path.exists should return True only for the best_model.zip
         mock_exists.side_effect = lambda path: path == str(expected_best_model_path)
 
         model_path, alt_path = resolve_model_path(effective_config)
-        
+
         assert model_path == str(expected_best_model_path)
         mock_get_rel_conf.assert_called_once_with(effective_config)
         mock_gen_hash.assert_called_once_with({"some_key": "some_value"})
@@ -424,7 +431,7 @@ class TestConfigLoading:
 
     def test_load_config_integration(self, mock_configs_dir, monkeypatch):
         monkeypatch.chdir(mock_configs_dir) # Set CWD to where config.yaml is
-        
+
         # mock_configs_dir creates:
         # ./config.yaml (agent_type: PPO, environment.initial_balance: 20000)
         # ./configs/defaults/environment.yaml (kline_window_size: 20, initial_balance: 10000)

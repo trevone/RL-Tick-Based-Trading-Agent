@@ -161,13 +161,15 @@ def fetch_and_cache_kline_data(
         _print_fn("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
         return pd.DataFrame()
 
-    os.makedirs(cache_dir, exist_ok=True)
-    daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
     ta_features_for_filename = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
+    daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
     cache_file = get_data_path_for_day(
         date_str=daily_file_date_str, symbol=symbol, data_type="kline",
         interval=interval, price_features_to_add=ta_features_for_filename, cache_dir=cache_dir
     )
+
+    # Ensure base cache directory exists
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
 
     if log_level == "detailed":
         _print_fn(f"DEBUG_KLINE_DAILY: Checking for daily K-line cache: {cache_file}"); sys.stdout.flush()
@@ -252,9 +254,11 @@ def fetch_continuous_aggregate_trades(
         _print_fn("CRITICAL ERROR in fetch_continuous_aggregate_trades: python-binance library not found."); sys.stdout.flush()
         return pd.DataFrame()
 
-    os.makedirs(cache_dir, exist_ok=True)
     daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
     cache_file = get_data_path_for_day(daily_file_date_str, symbol, data_type="agg_trades", cache_dir=cache_dir)
+
+    # Ensure base cache directory exists
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
 
     if log_level == "detailed":
         _print_fn(f"DEBUG_AGGTRADES_DAILY: Checking for daily RAW agg_trades cache: {cache_file}"); sys.stdout.flush()
@@ -356,9 +360,8 @@ def fetch_continuous_aggregate_trades(
 def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades",
                           interval: str = None, price_features_to_add: list = None,
                           cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None) -> str:
-    # Create the symbol-specific subdirectory
+    # This function now only returns the path string. Directory creation is handled by the saving function.
     symbol_cache_dir = os.path.join(cache_dir, symbol)
-    os.makedirs(symbol_cache_dir, exist_ok=True)
 
     if data_type == "agg_trades":
         filename_prefix = "bn_aggtrades"
@@ -375,7 +378,6 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
         safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}{sorted_features_str}.parquet"
     else:
         raise ValueError(f"Unsupported data_type: {data_type}. Must be 'agg_trades' or 'kline'.")
-    # Join with the new symbol-specific directory
     return os.path.join(symbol_cache_dir, safe_filename)
 
 def _generate_data_config_hash_key(params: dict, length: int = 10) -> str:
@@ -386,11 +388,9 @@ def _generate_data_config_hash_key(params: dict, length: int = 10) -> str:
 
 def _get_range_cache_path(symbol: str, start_date_str: str, end_date_str: str, data_type_suffix: str,
                           cache_config_params: dict, cache_dir: str = DATA_CACHE_DIR) -> str:
-    # Create the symbol-specific subdirectory first
+    # This function now only returns the path string. Directory creation is handled by the saving function.
     symbol_cache_dir = os.path.join(cache_dir, symbol)
-    # Then create the range_cache subdir inside the symbol's dir
     range_cache_dir = os.path.join(symbol_cache_dir, RANGE_CACHE_SUBDIR)
-    os.makedirs(range_cache_dir, exist_ok=True)
     config_hash = _generate_data_config_hash_key(cache_config_params)
     safe_start = start_date_str.replace(" ", "_").replace(":", "")
     safe_end = end_date_str.replace(" ", "_").replace(":", "")
@@ -535,7 +535,11 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
 
 
                     if log_level == "detailed": _print_fn(f"DEBUG_LOAD_TICK (Daily): Resampled shape: {df_daily.shape}. Saving to: {daily_file_path}"); sys.stdout.flush()
+                    
+                    # Ensure directory exists before saving
+                    os.makedirs(os.path.dirname(daily_file_path), exist_ok=True)
                     df_daily.to_parquet(daily_file_path)
+
                     if log_level == "detailed": _print_fn(f"DEBUG_LOAD_TICK (Daily): Resampled daily data for {date_str_for_day} saved to {daily_file_path}"); sys.stdout.flush()
                 except Exception as e_resample:
                     if log_level != "none": _print_fn(f"Error resampling daily tick data for {date_str_for_day}: {e_resample}. Using raw."); sys.stdout.flush()
@@ -566,27 +570,24 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
 
-        # --- START: DATETIME FILTERING LOGIC ---
+        # --- DATETIME FILTERING LOGIC ---
         try:
-            # Parse the full start and end datetimes from the input strings
             start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
             end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
-
-            # Filter the combined DataFrame to the precise datetime range
             original_count = len(combined_df)
             combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
-
             if log_level in ["normal", "detailed"] and original_count > 0:
                 print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
-
         except Exception as e_filter:
             if log_level != "none":
                 print(f"WARNING: Could not apply precise datetime filter to combined tick data: {e_filter}. Returning daily-aligned data.")
-        # --- END: DATETIME FILTERING LOGIC ---
-
+        
         if log_level == "detailed":
             _print_fn_after_loop(f"DEBUG_LOAD_TICK (Range): Combined all daily tick data. Shape: {combined_df.shape}")
+        
         try:
+            # Ensure directory for range cache exists before saving
+            os.makedirs(os.path.dirname(range_cache_file_path), exist_ok=True)
             if log_level != "none": _print_fn_after_loop(f"Saving combined tick data to range cache: {range_cache_file_path}")
             combined_df.to_parquet(range_cache_file_path)
             if log_level == "detailed": _print_fn_after_loop(f"DEBUG_LOAD_TICK (Range): Successfully saved to range cache: {range_cache_file_path}")
@@ -693,23 +694,17 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
 
-        # --- START: DATETIME FILTERING LOGIC ---
+        # --- DATETIME FILTERING LOGIC ---
         try:
-            # Parse the full start and end datetimes from the input strings
             start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
             end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
-
-            # Filter the combined DataFrame to the precise datetime range
             original_count = len(combined_df)
             combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
-
             if log_level in ["normal", "detailed"] and original_count > 0:
                 print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
-
         except Exception as e_filter:
             if log_level != "none":
                 print(f"WARNING: Could not apply precise datetime filter to combined k-line data: {e_filter}. Returning daily-aligned data.")
-        # --- END: DATETIME FILTERING LOGIC ---
 
         for feat in price_features:
             if feat not in combined_df.columns:
@@ -725,6 +720,8 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         if log_level == "detailed": _print_fn_range(f"DEBUG_LOAD_KLINE (Range): Combined all daily K-line data. Shape: {combined_df.shape}")
 
         try:
+            # Ensure directory for range cache exists before saving
+            os.makedirs(os.path.dirname(range_cache_file_path), exist_ok=True)
             if log_level != "none": _print_fn_range(f"Saving combined kline data to range cache: {range_cache_file_path}")
             combined_df.to_parquet(range_cache_file_path)
             if log_level == "detailed": _print_fn_range(f"DEBUG_LOAD_KLINE (Range): Successfully saved to range cache: {range_cache_file_path}")
