@@ -18,7 +18,7 @@ run_settings:
   use_stop_training_callback: true    # Use StopTrainingOnNoModelImprovement callback
   stop_training_patience_evals: 5     # Patience for StopTrainingOnNoModelImprovement (in number of evaluations)
   stop_training_min_evals: 10         # Minimum number of evaluations before StopTrainingOnNoModelImprovement can trigger
-  device: "auto"                      # Device for training: "auto", "cpu", "cuda"
+  device: "cpu"                       # Device for training: "auto", "cpu", "cuda"
 
   # --- Data and Symbol Settings (Moved from binance_settings) ---
   default_symbol: "BTCUSDT"           # The default trading pair for data fetching
