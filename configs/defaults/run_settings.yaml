@@ -11,7 +11,7 @@ run_settings:
   eval_freq_episodes: 10              # Number of training episodes between evaluations (for EvalCallback)
   n_evaluation_episodes: 3            # Number of episodes to run during each evaluation callback or standalone eval
   print_step_info_freq: 50            # Print step info every X steps during evaluation (when log_level is 'normal')
-  continue_from_existing_model: false # Set to true to attempt to load and continue training from a model in the same log directory
+  continue_from_existing_model: true  # Set to true to attempt to load and continue training from a model in the same log directory
   save_on_interrupt: true             # Save model if training is KeyboardInterrupted
   save_checkpoints: true              # Enable periodic checkpoint saving during training
   num_checkpoints_to_save: 5          # Number of checkpoints to aim for (save_freq is derived from this and total_timesteps)
