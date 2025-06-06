@@ -5,20 +5,18 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import sys
+import traceback
 
-# --- UPDATED IMPORTS ---
 from src.data.config_loader import load_config
 from src.data.path_manager import get_data_path_for_day
 from src.data.binance_client import fetch_and_cache_tick_data, fetch_and_cache_kline_data
 from src.data.data_validator import validate_daily_data
-# --- END UPDATED IMPORTS ---
 
 LOG_DIR_BASE_NAME = "logs"
 DATA_MANAGEMENT_LOG_FILENAME = "data_management.log"
 
 def _get_project_root():
     """Gets the project root directory based on this script's location."""
-    # Assumes this script is in ProjectRoot/src/data/
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _ensure_log_file_path():
@@ -34,26 +32,19 @@ def _log_deletion_event(file_path: str, reason: str):
     timestamp = datetime.now(timezone.utc).isoformat()
     
     reason_summary = reason
-    details_section = [] # Will hold formatted detail lines
+    details_section = []
 
     validation_failed_prefix = "Validation failed: "
     if reason.startswith(validation_failed_prefix):
         reason_summary = "Validation Failed"
-        # Extract the original message part from validate_daily_data
         original_validation_message = reason[len(validation_failed_prefix):].strip()
-        
-        # Check if it's the detailed "One or more checks FAILED:" message
         specific_errors_header = "One or more checks FAILED:"
         if original_validation_message.startswith(specific_errors_header):
-            # Get lines after the header, these are the specific error messages
             error_lines_str = original_validation_message[len(specific_errors_header):].strip()
-            # Format each error line for the details section
             details_section = [f"  {line.strip()}" for line in error_lines_str.splitlines() if line.strip()]
         else:
-            # It's a simpler validation failure message (e.g., "Could not read Parquet file...")
             details_section = [f"  {original_validation_message}"]
     
-    # Construct the log message
     log_entry_parts = [
         "--------------------------------------------------",
         f"Timestamp: {timestamp}",
@@ -65,13 +56,11 @@ def _log_deletion_event(file_path: str, reason: str):
     if details_section:
         log_entry_parts.append("Details:")
         log_entry_parts.extend(details_section)
-    elif reason_summary != reason: # Should only happen if we summarized but didn't find specific details structure
+    elif reason_summary != reason:
         log_entry_parts.append("Details:")
         log_entry_parts.append(f"  {reason}")
 
-
-    log_entry_parts.append("--------------------------------------------------\n") # Add a newline at the end
-    
+    log_entry_parts.append("--------------------------------------------------\n")
     log_message = "\n".join(log_entry_parts)
 
     try:
@@ -80,257 +69,174 @@ def _log_deletion_event(file_path: str, reason: str):
     except Exception as e:
         print(f"  ERROR: Failed to write to deletion log ({log_file_full_path}): {e}")
 
-# NEW: Function to load configurations for data management
 def load_configs_for_data_management(config_dir="configs/defaults") -> dict:
     """Loads configurations for data management tasks."""
     default_config_paths = [
-        os.path.join(config_dir, "run_settings.yaml"), # For log_level and historical_cache_dir
-        os.path.join(config_dir, "binance_settings.yaml") # For API keys
+        os.path.join(config_dir, "run_settings.yaml"),
+        os.path.join(config_dir, "binance_settings.yaml")
     ]
-    # Main config.yaml can override defaults
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
+def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cache_dir, path_manager_kwargs, fetch_function, fetch_function_kwargs):
+    """
+    Generic helper function to manage downloading and validating data for a single day.
+    """
+    print(f"\n--- Processing {symbol} {data_type} for {date_str_for_file} ---")
+    file_path = get_data_path_for_day(date_str_for_file, symbol, data_type=data_type, cache_dir=historical_cache_dir, **path_manager_kwargs)
+    sys.stdout.flush()
+
+    data_fetched = None
+    
+    if os.path.exists(file_path):
+        try:
+            if os.path.getsize(file_path) == 0:
+                reason = "File was 0 bytes."
+                print(f"  Warning: Existing file {file_path} is 0 bytes. Deleting.")
+                os.remove(file_path)
+                _log_deletion_event(file_path, reason)
+            else:
+                temp_df = pd.read_parquet(file_path)
+                if not temp_df.empty:
+                    print(f"  File already exists and is not empty: {file_path}.")
+                    data_fetched = temp_df
+                else:
+                    reason = "File was empty after reading."
+                    print(f"  Warning: Existing file {file_path} is empty after reading. Deleting.")
+                    os.remove(file_path)
+                    _log_deletion_event(file_path, reason)
+        except Exception as e:
+            reason = f"File unreadable/corrupt: {e}"
+            print(f"  Error reading existing file {file_path}: {e}. Deleting.")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                _log_deletion_event(file_path, reason)
+
+    if data_fetched is None:
+        print(f"  Attempting to download and cache data...")
+        sys.stdout.flush()
+        try:
+            # FIX: Pass 'normal' log_level to activate the progress bar in the client
+            fetch_function_kwargs['log_level'] = 'normal'
+            data_fetched = fetch_function(**fetch_function_kwargs)
+            if data_fetched is not None and not data_fetched.empty:
+                print(f"  Successfully downloaded and cached data to {file_path}.")
+            else:
+                print(f"  No data returned by API for this period.")
+        except Exception as e:
+            print(f"  Error during download: {e}")
+            traceback.print_exc()
+
+    if data_fetched is not None and not data_fetched.empty:
+        if not os.path.exists(file_path):
+            print(f"  Validation skipped as file {file_path} does not exist (download might have failed).")
+        else:
+            print(f"  Validating data at {file_path}...")
+            sys.stdout.flush()
+            try:
+                is_valid, message = validate_daily_data(file_path, log_level='none')
+                if is_valid:
+                    print(f"  Validation successful: {message.splitlines()[0]}")
+                else:
+                    reason = f"Validation failed: {message}"
+                    print(f"  VALIDATION FAILED: {message}")
+                    os.remove(file_path)
+                    print(f"  DELETED invalid cached file: {file_path}")
+                    _log_deletion_event(file_path, reason)
+            except Exception as e_val:
+                print(f"  Error during validation: {e_val}")
+    else:
+        print(f"  Validation skipped as no valid data was obtained.")
+    sys.stdout.flush()
 
 def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str):
-    # Load configuration to get settings
+    """
+    Manages downloading and validating aggregate trade data for a date range.
+    """
     effective_config = load_configs_for_data_management()
     run_settings = effective_config.get("run_settings", {})
     binance_settings = effective_config.get("binance_settings", {})
-    
-    # Use historical_cache_dir from run_settings, fallback to a default if not found
     historical_cache_dir = run_settings.get("historical_cache_dir", "data_cache/")
     
+    print(f"--- Managing AGGREGATE TRADES ---")
     print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
-    sys.stdout.flush()
-
-    start_date_range = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
-    end_date_range = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
     
-    current_date = start_date_range
-    while current_date <= end_date_range:
-        date_str_for_file = current_date.strftime('%Y-%m-%d')
+    current_date = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
+    end_date = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
+    
+    while current_date <= end_date:
+        date_str = current_date.strftime('%Y-%m-%d')
+        day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
+        day_end_dt_utc = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.utc)
+        
+        fetch_kwargs = {
+            "symbol": symbol,
+            "start_date_str": day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_date_str": day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "cache_dir": historical_cache_dir,
+            "api_key": binance_settings.get("api_key"),
+            "api_secret": binance_settings.get("api_secret"),
+            "testnet": binance_settings.get("testnet", False),
+        }
 
+        _manage_single_day_data(
+            date_str_for_file=date_str,
+            symbol=symbol,
+            data_type="agg_trades",
+            historical_cache_dir=historical_cache_dir,
+            path_manager_kwargs={},
+            fetch_function=fetch_and_cache_tick_data,
+            fetch_function_kwargs=fetch_kwargs
+        )
+        current_date += timedelta(days=1)
+    print("\nAggregate trades data management process completed.")
+
+def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str, interval: str, price_features_to_add: list):
+    """
+    Manages downloading and validating K-line data for a date range.
+    """
+    effective_config = load_configs_for_data_management()
+    run_settings = effective_config.get("run_settings", {})
+    binance_settings = effective_config.get("binance_settings", {})
+    historical_cache_dir = run_settings.get("historical_cache_dir", "data_cache/")
+
+    print(f"--- Managing K-LINE DATA ({interval}) ---")
+    print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
+
+    current_date = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
+    end_date = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
+
+    while current_date <= end_date:
+        date_str = current_date.strftime('%Y-%m-%d')
         day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
         day_end_dt_utc = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.utc)
 
+        fetch_kwargs = {
+            "symbol": symbol,
+            "interval": interval,
+            "start_date_str": day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_date_str": day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            "cache_dir": historical_cache_dir,
+            "price_features_to_add": price_features_to_add,
+            "api_key": binance_settings.get("api_key"),
+            "api_secret": binance_settings.get("api_secret"),
+            "testnet": binance_settings.get("testnet", False),
+        }
+        path_kwargs = {
+            "interval": interval,
+            "price_features_to_add": price_features_to_add
+        }
 
-        start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-        end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-
-
-        file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="agg_trades", cache_dir=historical_cache_dir)
-
-        print(f"Processing {symbol} agg_trades for {date_str_for_file}")
-        sys.stdout.flush()
-
-        data_fetched = None 
-        
-        if os.path.exists(file_path):
-            try:
-                if os.path.getsize(file_path) == 0:
-                    reason_for_del = "File was 0 bytes."
-                    print(f"  Warning: Existing file {file_path} is 0 bytes. Deleting and re-downloading.")
-                    sys.stdout.flush()
-                    os.remove(file_path)
-                    _log_deletion_event(file_path, reason_for_del)
-                else:
-                    temp_df = pd.read_parquet(file_path)
-                    if not temp_df.empty:
-                        print(f"  File already exists and is not empty: {file_path}. Proceeding to validation.")
-                        sys.stdout.flush()
-                        data_fetched = temp_df 
-                    else:
-                        reason_for_del = "File was empty after reading."
-                        print(f"  Warning: Existing file {file_path} is empty after reading. Deleting and re-downloading.")
-                        sys.stdout.flush()
-                        os.remove(file_path)
-                        _log_deletion_event(file_path, reason_for_del)
-            except Exception as e: 
-                reason_for_del = f"File unreadable/corrupt: {e}"
-                print(f"  Error reading existing file {file_path}: {e}. Deleting and re-downloading.")
-                sys.stdout.flush()
-                if os.path.exists(file_path): 
-                    os.remove(file_path)
-                    _log_deletion_event(file_path, reason_for_del)
-
-        if data_fetched is None: 
-            print(f"  Attempting to download and cache data for {date_str_for_file}...")
-            sys.stdout.flush()
-            try:
-                data_fetched = fetch_and_cache_tick_data(
-                    symbol, 
-                    start_datetime_str_for_api, 
-                    end_datetime_str_for_api, 
-                    cache_dir=historical_cache_dir, 
-                    log_level='normal',
-                    api_key=binance_settings.get("api_key"),
-                    api_secret=binance_settings.get("api_secret"),
-                    testnet=binance_settings.get("testnet", False),
-                    api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2)
-                )
-                
-                if data_fetched is not None and not data_fetched.empty:
-                    print(f"  Successfully downloaded and cached data to {file_path}.")
-                else:
-                    print(f"  No data returned by API for {symbol} on {date_str_for_file}. File not created or is empty.")
-                sys.stdout.flush()
-            except Exception as e:
-                print(f"  Error downloading data for {symbol} on {date_str_for_file}: {e}")
-                sys.stdout.flush()
-
-        if data_fetched is not None and not data_fetched.empty:
-            if not os.path.exists(file_path):
-                 print(f"  Validation skipped for {symbol} on {date_str_for_file} as file {file_path} does not exist (download might have failed or path mismatch).")
-                 sys.stdout.flush()
-            else:
-                print(f"  Validating data for {symbol} on {date_str_for_file} (Path: {file_path})...")
-                sys.stdout.flush()
-                try:
-                    is_valid, message = validate_daily_data(file_path, log_level='none') 
-                    if is_valid:
-                        print(f"  Validation successful: {message.splitlines()[0]}")
-                    else:
-                        reason_for_del = f"Validation failed: {message}"
-                        print(f"  VALIDATION FAILED for {file_path}: {message}")
-                        try:
-                            os.remove(file_path)
-                            print(f"  DELETED invalid cached file: {file_path}")
-                            _log_deletion_event(file_path, reason_for_del)
-                        except OSError as e_del:
-                            print(f"  ERROR: Could not delete invalid file {file_path}: {e_del}")
-                    sys.stdout.flush()
-                except Exception as e_val:
-                    print(f"  Error during validation for {symbol} on {date_str_for_file}: {e_val}")
-                    sys.stdout.flush()
-        else:
-            print(f"  Validation skipped for {symbol} on {date_str_for_file} as no valid data was obtained or downloaded.")
-            sys.stdout.flush()
-
-        current_date += timedelta(days=1)
-    print("\nAggregate trades data management process completed.")
-    sys.stdout.flush()
-
-
-def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str, interval: str, price_features_to_add: list):
-    # Load configuration to get settings
-    effective_config = load_configs_for_data_management()
-    run_settings = effective_config.get("run_settings", {})
-    binance_settings = effective_config.get("binance_settings", {})
-    
-    # Use historical_cache_dir from run_settings, fallback
-    historical_cache_dir = run_settings.get("historical_cache_dir", "data_cache/")
-
-    print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
-    sys.stdout.flush()
-
-    start_date_range = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
-    end_date_range = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
-
-    current_date = start_date_range
-    while current_date <= end_date_range:
-        date_str_for_file = current_date.strftime('%Y-%m-%d')
-
-        day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
-        day_end_dt_utc = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.utc) 
-
-        start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-        end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S") 
-
-        file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="kline", 
-                                        interval=interval, price_features_to_add=price_features_to_add,
-                                        cache_dir=historical_cache_dir)
-
-        print(f"Processing {symbol} klines ({interval}) for {date_str_for_file}")
-        sys.stdout.flush()
-        data_fetched = None
-        
-        if os.path.exists(file_path):
-            try:
-                if os.path.getsize(file_path) == 0:
-                    reason_for_del = "File was 0 bytes."
-                    print(f"  Warning: Existing file {file_path} is 0 bytes. Deleting and re-downloading.")
-                    sys.stdout.flush()
-                    os.remove(file_path)
-                    _log_deletion_event(file_path, reason_for_del)
-                else:
-                    temp_df = pd.read_parquet(file_path)
-                    if not temp_df.empty:
-                        print(f"  File already exists and is not empty: {file_path}. Proceeding to validation.")
-                        sys.stdout.flush()
-                        data_fetched = temp_df
-                    else:
-                        reason_for_del = "File was empty after reading."
-                        print(f"  Warning: Existing file {file_path} is empty after reading. Deleting and re-downloading.")
-                        sys.stdout.flush()
-                        os.remove(file_path)
-                        _log_deletion_event(file_path, reason_for_del)
-            except Exception as e:
-                reason_for_del = f"File unreadable/corrupt: {e}"
-                print(f"  Error reading existing file {file_path}: {e}. Deleting and re-downloading.")
-                sys.stdout.flush()
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    _log_deletion_event(file_path, reason_for_del)
-
-        if data_fetched is None:
-            print(f"  Attempting to download and cache K-line data for {date_str_for_file}...")
-            sys.stdout.flush()
-            try:
-                data_fetched = fetch_and_cache_kline_data(
-                    symbol=symbol,
-                    interval=interval,
-                    start_date_str=start_datetime_str_for_api, 
-                    end_date_str=end_datetime_str_for_api,
-                    cache_dir=historical_cache_dir,
-                    price_features_to_add=price_features_to_add,
-                    log_level='normal', 
-                    api_key=binance_settings.get("api_key"),
-                    api_secret=binance_settings.get("api_secret"),
-                    testnet=binance_settings.get("testnet", False),
-                    api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2)
-                )
-                
-                if data_fetched is not None and not data_fetched.empty:
-                    print(f"  Successfully downloaded and cached K-line data to {file_path}.")
-                else: 
-                    print(f"  No K-line data returned by API for {symbol} on {date_str_for_file} for interval {interval}. File may be empty or not created.")
-                sys.stdout.flush()
-
-            except Exception as e:
-                print(f"  Error downloading K-line data for {symbol} on {date_str_for_file}: {e}")
-                sys.stdout.flush()
-
-        if data_fetched is not None and not data_fetched.empty:
-            if not os.path.exists(file_path):
-                 print(f"  Validation skipped for Klines {symbol} on {date_str_for_file} as file {file_path} does not exist (download might have failed or path mismatch).")
-                 sys.stdout.flush()
-            else:
-                print(f"  Validating K-line data for {symbol} on {date_str_for_file} (Path: {file_path})...")
-                sys.stdout.flush()
-                try:
-                    is_valid, message = validate_daily_data(file_path, log_level='none') 
-                    if is_valid:
-                        print(f"  Validation successful: {message.splitlines()[0]}")
-                    else:
-                        reason_for_del = f"Validation failed: {message}"
-                        print(f"  VALIDATION FAILED for {file_path}: {message}")
-                        try:
-                            os.remove(file_path)
-                            print(f"  DELETED invalid cached file: {file_path}")
-                            _log_deletion_event(file_path, reason_for_del)
-                        except OSError as e_del:
-                            print(f"  ERROR: Could not delete invalid file {file_path}: {e_del}")
-                    sys.stdout.flush()
-                except Exception as e_val:
-                    print(f"  Error during validation for Klines {symbol} on {date_str_for_file}: {e_val}")
-                    sys.stdout.flush()
-        else:
-            print(f"  Validation skipped for Klines {symbol} on {date_str_for_file} as no valid data was obtained or downloaded.")
-            sys.stdout.flush()
+        _manage_single_day_data(
+            date_str_for_file=date_str,
+            symbol=symbol,
+            data_type="kline",
+            historical_cache_dir=historical_cache_dir,
+            path_manager_kwargs=path_kwargs,
+            fetch_function=fetch_and_cache_kline_data,
+            fetch_function_kwargs=fetch_kwargs
+        )
         current_date += timedelta(days=1)
     print("\nK-line data management process completed.")
-    sys.stdout.flush()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download and manage data for a specified date range.")
@@ -350,19 +256,12 @@ if __name__ == "__main__":
     end_date_arg_dt = datetime.strptime(args.end_date, '%Y-%m-%d').date()
 
     if start_date_arg_dt > current_system_date:
-        print(f"\nWARNING: Your start date ({args.start_date}) is in the future (current date: {current_system_date.strftime('%Y-%m-%d')}). "
-              "Binance API provides historical data, not future data. You will likely receive no data.\n")
-        sys.stdout.flush()
+        print(f"\nWARNING: Your start date ({args.start_date}) is in the future. You will likely receive no data.\n")
     elif end_date_arg_dt > current_system_date:
-         print(f"\nWARNING: Your end date ({args.end_date}) is in the future (current date: {current_system_date.strftime('%Y-%m-%d')}). "
-               "Binance API provides historical data up to current time. "
-               "You might receive partial data for the end date, or no data if start is also future.\n")
-         sys.stdout.flush()
+         print(f"\nWARNING: Your end date ({args.end_date}) is in the future. You may receive partial data.\n")
     if end_date_arg_dt < start_date_arg_dt:
-        print(f"\nERROR: Your end date ({args.end_date}) is before your start date ({args.start_date}). Please provide a valid date range.\n")
-        sys.stdout.flush()
+        print(f"\nERROR: Your end date ({args.end_date}) is before your start date ({args.start_date}).\n")
         sys.exit(1)
-
 
     if args.data_type == "agg_trades":
         download_and_manage_data(args.start_date, args.end_date, args.symbol)
@@ -370,4 +269,3 @@ if __name__ == "__main__":
         download_and_manage_kline_data(args.start_date, args.end_date, args.symbol, args.interval, args.kline_features)
     else:
         print(f"Error: Invalid data_type '{args.data_type}' specified.")
-        sys.stdout.flush()

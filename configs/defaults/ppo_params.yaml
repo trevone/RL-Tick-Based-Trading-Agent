@@ -15,4 +15,5 @@ ppo_params:
   target_kl: 0.02                     # The maximum KL divergence between old and new policy
   use_sde: False                      # Whether to use generalized State Dependent Exploration (SDE)
   sde_sample_freq: -1                 # Sample a new SDE noise every n steps (and for the initial exploration)
-  policy_kwargs: "{'net_arch': [64, 64]}" # Network architecture for the policy and value function (as string to be eval'd)
+  policy_kwargs:
+    net_arch: [64, 64]                # Network architecture for the policy and value function (as string to be eval'd)
