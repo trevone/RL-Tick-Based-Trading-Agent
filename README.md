@@ -236,7 +236,7 @@ Use the `data_validator.py` script to check the integrity of all cached data for
     ```bash
     python -m src.agents.hpo
     ```
-      * Results are saved in `optuna_studies/`. The best parameters will be printed and saved to a `.json` file.
+      * Results are saved in `optuna/`. The best parameters will be printed and saved to a `.json` file.
 
 ### 5. Model Evaluation
 
