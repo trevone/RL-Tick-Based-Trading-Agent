@@ -18,3 +18,16 @@ run_settings:
   stop_training_patience_evals: 5     # Patience for StopTrainingOnNoModelImprovement (in number of evaluations)
   stop_training_min_evals: 10         # Minimum number of evaluations before StopTrainingOnNoModelImprovement can trigger
   device: "auto"                      # Device for training: "auto", "cpu", "cuda"
+
+  # --- Data and Symbol Settings (Moved from binance_settings) ---
+  default_symbol: "BTCUSDT"           # The default trading pair for data fetching
+  historical_interval: "1h"           # Default K-line interval for historical data (e.g., '1m', '15m', '30m', '1h')
+  historical_cache_dir: "data_cache/" # Directory to store cached historical data (relative to project root)
+  
+  # --- Training Period (Moved from binance_settings) ---
+  start_date_train: "2025-01-01 00:00:00" # Start datetime for training data (YYYY-MM-DD HH:MM:SS)
+  end_date_train: "2025-01-02 00:00:00"   # End datetime for training data (YYYY-MM-DD HH:MM:SS)
+
+  # --- Evaluation Period (Moved from evaluation_data) ---
+  start_date_eval: "2024-01-04 00:00:00" # Start datetime for evaluation period (YYYY-MM-DD HH:MM:SS)
+  end_date_eval: "2024-01-04 23:59:59"   # End datetime for evaluation period (YYYY-MM-DD HH:MM:SS)

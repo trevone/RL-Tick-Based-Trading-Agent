@@ -69,13 +69,17 @@ def train_agent(
         print(f"Error loading or merging configuration: {e}. Using minimal fallback.")
         traceback.print_exc()
         effective_config = {
-            "run_settings": {"log_level": "normal", "log_dir_base": "./logs/training/", "model_name": "fallback_agent", "eval_freq_episodes": 10, "n_evaluation_episodes": 3, "continue_from_existing_model": False},
+            "run_settings": {
+                "log_level": "normal", "log_dir_base": "./logs/training/", "model_name": "fallback_agent",
+                "eval_freq_episodes": 10, "n_evaluation_episodes": 3, "continue_from_existing_model": False,
+                "default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": DATA_CACHE_DIR,
+                "start_date_train": "2024-01-01 00:00:00", "end_date_train": "2024-01-01 23:59:59",
+                "start_date_eval": "2024-01-02 00:00:00", "end_date_eval": "2024-01-02 23:59:59"
+            },
             "environment": DEFAULT_ENV_CONFIG.copy(),
             "ppo_params": {"total_timesteps": 100000, "policy_kwargs": "{'net_arch': [64, 64]}"},
-            "binance_settings": {"default_symbol": "BTCUSDT", "historical_interval": "1h", "historical_cache_dir": DATA_CACHE_DIR,
-                                 "start_date_train": "2024-01-01 00:00:00", "end_date_train": "2024-01-01 23:59:59"},
-            "evaluation_data": {"start_date_eval": "2024-01-02 00:00:00", "end_date_eval": "2024-01-02 23:59:59"},
-            "hash_config_keys": {"environment": [], "agent_params": {"PPO": []}, "binance_settings": []}
+            "binance_settings": {"testnet": True, "api_request_delay_seconds": 0.2},
+            "hash_config_keys": {"run_settings": [], "environment": [], "agent_params": {"PPO": []}, "binance_settings": []}
         }
         if config_override:
             effective_config = merge_configs(effective_config, config_override)
@@ -84,7 +88,6 @@ def train_agent(
     run_settings = effective_config["run_settings"]
     env_config = effective_config["environment"]
     binance_settings = effective_config["binance_settings"]
-    evaluation_data_config = effective_config["evaluation_data"]
     agent_type = effective_config.get("agent_type", "PPO")
     algo_params = effective_config.get(f"{agent_type.lower()}_params", {})
 
@@ -129,21 +132,22 @@ def train_agent(
     print(f"Agent Type: {agent_type}")
     if log_to_file: print(f"Training logs will be saved to: {log_dir}")
 
-    train_start_date = binance_settings["start_date_train"]
-    train_end_date = binance_settings["end_date_train"]
-    symbol = binance_settings["default_symbol"]
-    interval = binance_settings["historical_interval"]
+    # Get data parameters from the centralized run_settings
+    start_date_train = run_settings["start_date_train"]
+    end_date_train = run_settings["end_date_train"]
+    symbol = run_settings["default_symbol"]
+    interval = run_settings["historical_interval"]
+    cache_dir = run_settings["historical_cache_dir"]
     kline_features = env_config["kline_price_features"]
-    cache_dir = binance_settings["historical_cache_dir"]
     tick_resample_interval_ms = env_config.get("tick_resample_interval_ms")
 
-    if current_log_level != "none": print(f"\n--- Preparing K-line training data ({symbol}, {interval}, {train_start_date} to {train_end_date}) ---")
+    if current_log_level != "none": print(f"\n--- Preparing K-line training data ({symbol}, {interval}, {start_date_train} to {end_date_train}) ---")
     kline_df_train = pd.DataFrame()
     try:
         kline_df_train = load_kline_data_for_range(
             symbol=symbol,
-            start_date_str=train_start_date,
-            end_date_str=train_end_date,
+            start_date_str=start_date_train,
+            end_date_str=end_date_train,
             interval=interval,
             price_features=kline_features,
             cache_dir=cache_dir,
@@ -163,13 +167,13 @@ def train_agent(
         traceback.print_exc()
         return -np.inf
 
-    if current_log_level != "none": print(f"\n--- Preparing Tick training data ({symbol}, {train_start_date} to {train_end_date}) ---")
+    if current_log_level != "none": print(f"\n--- Preparing Tick training data ({symbol}, {start_date_train} to {end_date_train}) ---")
     tick_df_train = pd.DataFrame()
     try:
         tick_df_train = load_tick_data_for_range(
             symbol=symbol,
-            start_date_str=train_start_date,
-            end_date_str=train_end_date,
+            start_date_str=start_date_train,
+            end_date_str=end_date_train,
             cache_dir=cache_dir,
             binance_settings=binance_settings,
             tick_resample_interval_ms=tick_resample_interval_ms,
@@ -189,7 +193,6 @@ def train_agent(
         return -np.inf
 
     # Create the base vectorized environment (non-normalized)
-    # This `vec_env` will be passed to VecNormalize.load if stats exist.
     vec_env_for_norm = None
     try:
         def create_env_fn(tick_data: pd.DataFrame, kline_data: pd.DataFrame, env_config_dict: dict, monitor_filepath: str = None):
@@ -215,15 +218,15 @@ def train_agent(
         return -np.inf
         
     # Initialize or load VecNormalize
-    env = None # This will be our final, possibly normalized, environment
+    env = None
     current_run_vec_normalize_path = os.path.join(log_dir, "vec_normalize.pkl")
 
     if run_settings.get("continue_from_existing_model", False) and os.path.exists(current_run_vec_normalize_path):
         if current_log_level != "none": print(f"Retraining: Found existing VecNormalize stats at {current_run_vec_normalize_path}. Loading them.")
         try:
             env = VecNormalize.load(current_run_vec_normalize_path, vec_env_for_norm)
-            env.training = True # Ensure it's set for training mode
-            env.norm_reward = False # As per current setup (usually norm_reward=False for training stability)
+            env.training = True
+            env.norm_reward = False
             if current_log_level != "none": print("VecNormalize stats loaded and env re-wrapped.")
         except Exception as e_vn_load:
             if current_log_level != "none": print(f"Retraining: Failed to load VecNormalize stats: {e_vn_load}. Initializing new stats.")
@@ -240,18 +243,18 @@ def train_agent(
     if current_log_level != "none": print(f"\nTraining Environment (VecNormalize) created: Obs Space {env.observation_space.shape}, Act Space {env.action_space.shape}")
 
 
-    eval_env_for_callback = None # For EvalCallback
-    if current_log_level != "none": # Only setup eval_env if not in "none" log_level (e.g. Optuna)
-        eval_start_date = evaluation_data_config["start_date_eval"]
-        eval_end_date = evaluation_data_config["end_date_eval"]
+    eval_env_for_callback = None
+    if current_log_level != "none":
+        start_date_eval = run_settings["start_date_eval"]
+        end_date_eval = run_settings["end_date_eval"]
 
         kline_df_eval = pd.DataFrame()
         tick_df_eval = pd.DataFrame()
 
-        if current_log_level != "none": print(f"\n--- Preparing K-line evaluation data ({symbol}, {interval}, {eval_start_date} to {eval_end_date}) ---")
+        if current_log_level != "none": print(f"\n--- Preparing K-line evaluation data ({symbol}, {interval}, {start_date_eval} to {end_date_eval}) ---")
         try:
             kline_df_eval = load_kline_data_for_range(
-                symbol=symbol, start_date_str=eval_start_date, end_date_str=eval_end_date,
+                symbol=symbol, start_date_str=start_date_eval, end_date_str=end_date_eval,
                 interval=interval, price_features=kline_features, cache_dir=cache_dir,
                 binance_settings=binance_settings, log_level=current_log_level
             )
@@ -260,10 +263,10 @@ def train_agent(
         except Exception as e:
             if current_log_level != "none": print(f"WARNING: Eval K-line data not loaded: {e}.")
 
-        if current_log_level != "none": print(f"\n--- Preparing Tick evaluation data ({symbol}, {eval_start_date} to {eval_end_date}) ---")
+        if current_log_level != "none": print(f"\n--- Preparing Tick evaluation data ({symbol}, {start_date_eval} to {end_date_eval}) ---")
         try:
             tick_df_eval = load_tick_data_for_range(
-                symbol=symbol, start_date_str=eval_start_date, end_date_str=eval_end_date,
+                symbol=symbol, start_date_str=start_date_eval, end_date_str=end_date_eval,
                 cache_dir=cache_dir, binance_settings=binance_settings,
                 tick_resample_interval_ms=tick_resample_interval_ms, log_level=current_log_level
             )
@@ -280,16 +283,14 @@ def train_agent(
 
                 eval_monitor_path = os.path.join(log_dir, "eval_monitor.csv") if log_to_file else None
                 
-                # Create a separate VecEnv for evaluation to be normalized
                 eval_vec_env_for_norm = make_vec_env(
                     create_env_fn(tick_df_eval, kline_df_eval, current_env_config_for_eval, eval_monitor_path),
                     n_envs=1, seed=np.random.randint(0,10000)
                 )
-                # Normalize eval_env using the stats from the training env OR loaded stats
                 eval_env_for_callback = VecNormalize(eval_vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
-                eval_env_for_callback.obs_rms = env.obs_rms # Use same running mean/std as training env
-                eval_env_for_callback.ret_rms = env.ret_rms # Not used if norm_reward=False
-                eval_env_for_callback.training = False # Set to eval mode
+                eval_env_for_callback.obs_rms = env.obs_rms
+                eval_env_for_callback.ret_rms = env.ret_rms
+                eval_env_for_callback.training = False
                 eval_env_for_callback.norm_reward = False
 
                 stop_train_callback = StopTrainingOnNoModelImprovement(
@@ -300,11 +301,11 @@ def train_agent(
                 
                 approx_steps_per_train_episode = max(1, len(tick_df_train) - env_config.get("tick_feature_window_size", 50))
                 eval_freq_steps = int(run_settings.get("eval_freq_episodes", 10) * approx_steps_per_train_episode)
-                eval_freq_steps = max(eval_freq_steps, 1) # Ensure > 0
+                eval_freq_steps = max(eval_freq_steps, 1)
 
                 eval_callback = EvalCallback(
                     eval_env_for_callback,
-                    best_model_save_path=model_save_dir if log_to_file else None, # model_save_dir is .../best_model/
+                    best_model_save_path=model_save_dir if log_to_file else None,
                     log_path=log_dir if log_to_file else None,
                     eval_freq=eval_freq_steps,
                     n_eval_episodes=run_settings.get("n_evaluation_episodes", 3),
@@ -319,22 +320,20 @@ def train_agent(
                 if current_log_level != "none": print(f"WARNING: Failed to set up EvalCallback: {e_eval_setup}.")
                 traceback.print_exc()
                 eval_callback = None
-                if eval_env_for_callback: eval_env_for_callback.close() # Close if created
-                eval_env_for_callback = None # Ensure it's None
+                if eval_env_for_callback: eval_env_for_callback.close()
+                eval_env_for_callback = None
         else:
             if current_log_level != "none": print("EvalCallback skipped: Not enough evaluation data (K-line or Tick data is empty).")
-            eval_callback = None # Ensure it's None if data is missing
-    else: # current_log_level == "none"
-        if run_settings.get("log_level", "normal") != "none": # Check original intended log_level
+            eval_callback = None
+    else:
+        if run_settings.get("log_level", "normal") != "none":
              print("EvalCallback skipped due to log_level='none' (likely Optuna trial or test).")
         eval_callback = None
 
-
-    # Model Initialization or Loading for Retraining
     model = None
     model_loaded_for_retraining = False
     algo_params_for_init = algo_params.copy()
-    total_timesteps_for_learn = algo_params_for_init.pop("total_timesteps", 100000) # Pop for constructor, use var for learn()
+    total_timesteps_for_learn = algo_params_for_init.pop("total_timesteps", 100000)
 
     if "policy_kwargs" in algo_params_for_init and isinstance(algo_params_for_init["policy_kwargs"], str):
         try:
@@ -351,7 +350,7 @@ def train_agent(
             print("ERROR: RecurrentPPO requested but sb3_contrib not found.")
             if env: env.close()
             if eval_env_for_callback: eval_env_for_callback.close()
-            return -np.inf # Fatal error for this config
+            return -np.inf
     else:
         model_class = model_class_map.get(agent_type)
 
@@ -361,8 +360,8 @@ def train_agent(
         if eval_env_for_callback: eval_env_for_callback.close()
         return -np.inf
 
-    if run_settings.get("continue_from_existing_model", False) and log_to_file: # Retraining only makes sense if logs are saved
-        potential_best_model_path = os.path.join(model_save_dir, "best_model.zip") # model_save_dir is .../best_model/
+    if run_settings.get("continue_from_existing_model", False) and log_to_file:
+        potential_best_model_path = os.path.join(model_save_dir, "best_model.zip")
         potential_final_model_path = os.path.join(log_dir, "trained_model_final.zip")
         potential_interrupted_model_path = os.path.join(log_dir, "trained_model_interrupted.zip")
 
@@ -379,15 +378,14 @@ def train_agent(
             try:
                 model = model_class.load(
                     model_path_to_load_for_retrain,
-                    env=env, # Use the VecNormalize env (possibly with loaded stats)
+                    env=env,
                     device=run_settings.get("device", "auto")
                 )
                 
-                # If learning_rate is in current config, attempt to update the loaded model's LR for the new training phase
                 if "learning_rate" in algo_params_for_init:
                     new_lr = algo_params_for_init["learning_rate"]
                     try:
-                        current_lr_attr = getattr(model, "learning_rate", None) # Works for PPO, A2C, SAC
+                        current_lr_attr = getattr(model, "learning_rate", None)
                         if current_lr_attr is not None and current_lr_attr != new_lr :
                             model.learning_rate = new_lr
                             if hasattr(model, "_setup_lr_schedule"): model._setup_lr_schedule()
@@ -410,9 +408,9 @@ def train_agent(
         try:
             model = model_class(
                 "MlpPolicy" if agent_type != "RecurrentPPO" else "MlpLstmPolicy",
-                env, # Use the VecNormalize env
+                env,
                 verbose=1 if current_log_level == "detailed" else 0,
-                tensorboard_log=tensorboard_log_dir, # Path to TB log parent directory
+                tensorboard_log=tensorboard_log_dir,
                 device=run_settings.get("device", "auto"),
                 **algo_params_for_init
             )
@@ -439,9 +437,9 @@ def train_agent(
         checkpoint_callback = CheckpointCallback(
             save_freq=checkpoint_save_freq,
             save_path=checkpoint_save_dir,
-            name_prefix=f"{run_id}_ckpt", # Changed from f"{run_id}_model" to avoid confusion with final/best
-            save_replay_buffer=True, # Important for off-policy if continuing
-            save_vecnormalize=True, # Saves VecNormalize stats with checkpoint
+            name_prefix=f"{run_id}_ckpt",
+            save_replay_buffer=True,
+            save_vecnormalize=True,
             verbose=1 if current_log_level == "detailed" else 0
         )
         callbacks_list.append(checkpoint_callback)
@@ -461,8 +459,8 @@ def train_agent(
             total_timesteps=total_timesteps_for_learn,
             callback=callbacks_list,
             progress_bar=True if current_log_level != "none" else False,
-            tb_log_name=tb_log_name, # This is the run_id, logs will be in tensorboard_log_dir/run_id/
-            reset_num_timesteps=not model_loaded_for_retraining # False if retraining
+            tb_log_name=tb_log_name,
+            reset_num_timesteps=not model_loaded_for_retraining
         )
 
         learn_duration = time.time() - learn_start_time
@@ -475,7 +473,7 @@ def train_agent(
         if log_to_file:
             final_model_save_path = os.path.join(log_dir, "trained_model_final.zip")
             model.save(final_model_save_path)
-            env.save(os.path.join(log_dir, "vec_normalize.pkl")) # Standardized name
+            env.save(os.path.join(log_dir, "vec_normalize.pkl"))
             if current_log_level != "none": print(f"Final model and VecNormalize stats saved to {log_dir}")
         
         if eval_callback and hasattr(eval_callback, 'best_mean_reward') and eval_callback.best_mean_reward is not None:
@@ -489,13 +487,13 @@ def train_agent(
         if log_to_file and model is not None and run_settings.get("save_on_interrupt", True):
             interrupted_model_path = os.path.join(log_dir, "trained_model_interrupted.zip")
             model.save(interrupted_model_path)
-            env.save(os.path.join(log_dir, "vec_normalize.pkl")) # Standardized name
+            env.save(os.path.join(log_dir, "vec_normalize.pkl"))
             if current_log_level != "none": print(f"Interrupted model saved to {interrupted_model_path}")
-        final_return_metric = -np.inf # Or some other indicator of interruption
+        final_return_metric = -np.inf
     except Exception as e_learn:
         print(f"ERROR: An error occurred during training: {e_learn}")
         traceback.print_exc()
-        final_return_metric = -np.inf # Or some other indicator of error
+        final_return_metric = -np.inf
     finally:
         if env: env.close()
         if eval_env_for_callback: eval_env_for_callback.close()

@@ -718,6 +718,13 @@ def convert_to_native_types(data):
 def get_relevant_config_for_hash(effective_config: Dict) -> Dict:
     relevant_config_for_hash = {}
     hash_keys_structure = effective_config.get("hash_config_keys", {})
+    
+    # Process run_settings if defined in hash_keys
+    if "run_settings" in hash_keys_structure and isinstance(hash_keys_structure["run_settings"], list):
+        relevant_config_for_hash["run_settings"] = {
+            k: effective_config["run_settings"].get(k) for k in hash_keys_structure["run_settings"] if k in effective_config.get("run_settings",{})
+        }
+    
     if "environment" in hash_keys_structure and isinstance(hash_keys_structure["environment"], list):
         relevant_config_for_hash["environment"] = {
             k: effective_config["environment"].get(k) for k in hash_keys_structure["environment"] if k in effective_config.get("environment",{})

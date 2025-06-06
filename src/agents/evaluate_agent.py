@@ -159,7 +159,8 @@ def plot_performance(trade_history: list, price_data: pd.Series, eval_run_id: st
 def main():
     effective_eval_config = load_default_configs_for_evaluation()
 
-    current_log_level = effective_eval_config.get("run_settings", {}).get("log_level", "normal")
+    run_settings = effective_eval_config.get("run_settings", {})
+    current_log_level = run_settings.get("log_level", "normal")
     agent_type = effective_eval_config.get("agent_type", "PPO")
 
     eval_env_config_for_instance = effective_eval_config["environment"].copy()
@@ -176,7 +177,7 @@ def main():
         return
 
     eval_run_id = f"eval_{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-    eval_log_dir_base = effective_eval_config.get("run_settings", {}).get("eval_log_dir", "logs/evaluation/")
+    eval_log_dir_base = run_settings.get("eval_log_dir", "logs/evaluation/")
     eval_log_dir = os.path.join(eval_log_dir_base, eval_run_id)
     os.makedirs(eval_log_dir, exist_ok=True)
 
@@ -191,25 +192,27 @@ def main():
     if current_log_level != "none":
         print("Effective evaluation configuration saved to effective_eval_config.json")
 
-    eval_binance_settings = effective_eval_config["binance_settings"]
-    eval_data_settings = effective_eval_config["evaluation_data"]
-    eval_start_date = eval_data_settings["start_date_eval"]
-    eval_end_date = eval_data_settings["end_date_eval"]
+    binance_settings = effective_eval_config["binance_settings"]
+    start_date_eval = run_settings["start_date_eval"]
+    end_date_eval = run_settings["end_date_eval"]
+    symbol = run_settings["default_symbol"]
+    interval = run_settings["historical_interval"]
+    cache_dir = run_settings["historical_cache_dir"]
     kline_features_for_data_fetch = eval_env_config_for_instance["kline_price_features"]
     tick_resample_interval_ms = eval_env_config_for_instance.get("tick_resample_interval_ms")
 
-    if current_log_level != "none": print(f"\n--- Fetching and preparing K-line evaluation data from {eval_start_date} to {eval_end_date} ---")
+    if current_log_level != "none": print(f"\n--- Fetching and preparing K-line evaluation data from {start_date_eval} to {end_date_eval} ---")
     eval_kline_df = pd.DataFrame()
     try:
         eval_kline_df = load_kline_data_for_range(
-            symbol=eval_binance_settings["default_symbol"],
-            interval=eval_binance_settings["historical_interval"],
-            start_date_str=eval_start_date,
-            end_date_str=eval_end_date,
-            cache_dir=DATA_CACHE_DIR,
+            symbol=symbol,
+            interval=interval,
+            start_date_str=start_date_eval,
+            end_date_str=end_date_eval,
+            cache_dir=cache_dir,
             price_features=kline_features_for_data_fetch,
-            binance_settings=eval_binance_settings,
-            log_level=current_log_level # Pass log_level
+            binance_settings=binance_settings,
+            log_level=current_log_level
         )
         if eval_kline_df.empty:
             raise ValueError("K-line evaluation data is empty. Cannot proceed with evaluation.")
@@ -219,17 +222,17 @@ def main():
         traceback.print_exc()
         raise
 
-    if current_log_level != "none": print(f"\n--- Fetching and preparing Tick evaluation data from {eval_start_date} to {eval_end_date} ---")
+    if current_log_level != "none": print(f"\n--- Fetching and preparing Tick evaluation data from {start_date_eval} to {end_date_eval} ---")
     eval_tick_df = pd.DataFrame()
     try:
         eval_tick_df = load_tick_data_for_range(
-            symbol=eval_binance_settings["default_symbol"],
-            start_date_str=eval_start_date,
-            end_date_str=eval_end_date,
-            cache_dir=DATA_CACHE_DIR,
-            binance_settings=eval_binance_settings,
+            symbol=symbol,
+            start_date_str=start_date_eval,
+            end_date_str=end_date_eval,
+            cache_dir=cache_dir,
+            binance_settings=binance_settings,
             tick_resample_interval_ms=tick_resample_interval_ms,
-            log_level=current_log_level # Pass log_level
+            log_level=current_log_level
         )
         if eval_tick_df.empty:
             raise ValueError("Tick evaluation data is empty. Cannot proceed with evaluation.")
@@ -282,7 +285,7 @@ def main():
         if env_for_model: env_for_model.close()
         return
 
-    num_eval_episodes = eval_data_settings.get('n_evaluation_episodes', 3)
+    num_eval_episodes = run_settings.get('n_evaluation_episodes', 3)
     if current_log_level != "none": print(f"Starting evaluation for {num_eval_episodes} episodes...")
     all_episodes_rewards, all_episodes_profits_pct = [], []
     all_combined_trade_history = []
@@ -296,9 +299,8 @@ def main():
 
         actual_base_env = None
         try:
-            if isinstance(env_for_model.venv, DummyVecEnv): # Check if venv is DummyVecEnv
-                # Access path: VecNormalize -> DummyVecEnv -> Monitor -> FlattenAction -> SimpleTradingEnv
-                monitor_env = env_for_model.venv.envs[0] # This is the Monitor instance
+            if isinstance(env_for_model.venv, DummyVecEnv):
+                monitor_env = env_for_model.venv.envs[0]
                 if hasattr(monitor_env, 'env') and isinstance(monitor_env.env, FlattenAction):
                     flatten_action_env = monitor_env.env
                     if hasattr(flatten_action_env, 'env') and isinstance(flatten_action_env.env, SimpleTradingEnv):
@@ -312,8 +314,7 @@ def main():
         if current_log_level != "none": print(f"\n--- Evaluation Episode {episode + 1}/{num_eval_episodes} (Initial Balance: {initial_balance_this_episode:.2f}) ---")
 
         while not (terminated or truncated):
-            action_array, _states = model.predict(obs, deterministic=eval_data_settings.get("deterministic_prediction", True))
-            # CORRECTED LINE: Pass action_array directly, not as a list
+            action_array, _states = model.predict(obs, deterministic=run_settings.get("deterministic_prediction", True))
             obs, reward, done_array, info_list = env_for_model.step(action_array)
 
             terminated = done_array[0]
@@ -322,20 +323,19 @@ def main():
                 truncated = current_info["TimeLimit.truncated"]
             elif current_info.get("is_success") is False :
                  truncated = True
-            # Ensure truncated is True if terminated is True and no explicit TimeLimit.truncated
             elif terminated and not current_info.get('TimeLimit.truncated', False):
-                 truncated = True # Consider it truncated if episode ends for other reasons than TimeLimit
+                 truncated = True
             else:
                  truncated = False
 
 
-            discrete_action_for_log = int(np.round(action_array[0][0])) # action_array is (1,2), so action_array[0] is (2,), action_array[0][0] is scalar
+            discrete_action_for_log = int(np.round(action_array[0][0]))
             profit_target_param_for_log = action_array[0][1]
 
             episode_reward += reward[0]
             current_episode_step += 1
 
-            print_freq = eval_data_settings.get("print_step_info_freq", 50)
+            print_freq = run_settings.get("print_step_info_freq", 50)
             action_map_for_log = actual_base_env.ACTION_MAP if actual_base_env else {0:"Hold",1:"Buy",2:"Sell"}
 
             if current_log_level == "normal" and current_episode_step % print_freq == 0 :
@@ -405,11 +405,11 @@ def main():
     if current_log_level != "none": print("\n--- Generating Performance Chart ---")
     if not eval_tick_df.empty:
         plot_price_data_series = eval_tick_df['Price'].copy()
-        plot_price_data_series.name = eval_binance_settings['default_symbol']
+        plot_price_data_series.name = symbol
 
         plot_performance(all_combined_trade_history, plot_price_data_series, eval_run_id, eval_log_dir,
-                        title=f"Agent Evaluation: {eval_binance_settings['default_symbol']} ({eval_start_date} to {eval_end_date})",
-                        log_level=current_log_level # Pass log_level
+                        title=f"Agent Evaluation: {symbol} ({start_date_eval} to {end_date_eval})",
+                        log_level=current_log_level
                         )
     elif current_log_level != "none":
         print("Skipping plot generation as eval_tick_df is empty.")

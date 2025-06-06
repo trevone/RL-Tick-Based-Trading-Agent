@@ -1,5 +1,12 @@
 # configs/defaults/hash_keys.yaml
 hash_config_keys:
+  # Keys from the 'run_settings' section to include in the run hash.
+  run_settings:
+    - default_symbol
+    - historical_interval
+    - start_date_train
+    - end_date_train
+
   # Keys from the 'environment' section to include in the run hash.
   # Changing any of these parameters will result in a new hash and a new log directory.
   environment:
@@ -110,11 +117,4 @@ hash_config_keys:
 
   # Keys from the 'binance_settings' section to include in the run hash.
   binance_settings:
-    - default_symbol
-    - historical_interval
-    # These are important as they define the dataset the agent is trained on.
-    - start_date_train
-    - end_date_train
     - testnet # Whether it's trained on testnet data vs. mainnet data
-    # api_request_delay_seconds might not be essential for the hash itself unless it affects data quality significantly
-}

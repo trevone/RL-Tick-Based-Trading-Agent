@@ -91,7 +91,7 @@ class LiveTrader:
         
         # Determine logging directory for this live run
         self.live_run_id = f"live_{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-        self.live_log_dir = os.path.join(self.run_settings["live_log_dir"], self.live_run_id)
+        self.live_log_dir = os.path.join(self.run_settings.get("live_log_dir", "logs/live_trading/"), self.live_run_id)
         os.makedirs(self.live_log_dir, exist_ok=True)
         
         # Save effective config
@@ -139,7 +139,7 @@ class LiveTrader:
         # --- Binance WebSocket for Real-time Tick Data ---
         self.bm = BinanceSocketManager(self.client)
         self.tick_data_queue = queue.Queue() # Queue to store incoming ticks
-        self.conn_key = self.bm.start_aggtrade_socket(self.binance_settings["default_symbol"].lower(), self._process_tick_message)
+        self.conn_key = self.bm.start_aggtrade_socket(self.run_settings["default_symbol"].lower(), self._process_tick_message)
         self.bm.start()
         print("Binance WebSocket started for aggTrades.")
 
@@ -209,18 +209,17 @@ class LiveTrader:
         Fetches initial historical k-line data and initializes tick history for the environment.
         This data forms the initial observation space.
         """
-        symbol = self.binance_settings["default_symbol"]
-        interval = self.binance_settings["historical_interval"]
+        symbol = self.run_settings["default_symbol"]
+        interval = self.run_settings["historical_interval"]
+        cache_dir = self.run_settings["historical_cache_dir"]
         kline_window_size = self.env_config["kline_window_size"]
         tick_feature_window_size = self.env_config["tick_feature_window_size"]
         kline_features = self.env_config["kline_price_features"]
-        tick_resample_interval_ms = self.env_config.get("tick_resample_interval_ms") # NEW: Get resampling interval
+        tick_resample_interval_ms = self.env_config.get("tick_resample_interval_ms")
         
         # Fetch initial K-line data for context
-        # Fetch slightly more than needed to ensure full window, using current time minus required history
         end_time_kline = datetime.now(timezone.utc)
-        # Fetch enough data to cover window size plus a buffer
-        start_time_kline = end_time_kline - timedelta(hours=kline_window_size * 2) # Example: 2x the window
+        start_time_kline = end_time_kline - timedelta(hours=kline_window_size * 2)
         
         print(f"\nFetching initial K-line data ({symbol}, {interval}) for observation context...")
         self.current_kline_data = fetch_and_cache_kline_data(
@@ -228,7 +227,7 @@ class LiveTrader:
             interval=interval,
             start_date_str=start_time_kline.strftime("%Y-%m-%d %H:%M:%S"),
             end_date_str=end_time_kline.strftime("%Y-%m-%d %H:%M:%S"),
-            cache_dir=self.binance_settings.get("historical_cache_dir"),
+            cache_dir=cache_dir,
             price_features_to_add=kline_features,
             api_key=self.binance_settings.get("api_key"),
             api_secret=self.binance_settings.get("api_secret"),
@@ -240,9 +239,8 @@ class LiveTrader:
             print("WARNING: Initial K-line data is empty. Environment might not initialize correctly.")
 
         # Initialize historical ticks for observation
-        # Fetch historical tick data for the initial window, applying resampling if configured
         end_time_tick = datetime.now(timezone.utc)
-        start_time_tick = end_time_tick - timedelta(minutes=10) # Fetch recent 10 minutes of ticks
+        start_time_tick = end_time_tick - timedelta(minutes=10)
         
         print(f"\nFetching initial Tick data for observation context ({symbol}, {start_time_tick} to {end_time_tick})...")
         try:
@@ -250,19 +248,17 @@ class LiveTrader:
                 symbol=symbol,
                 start_date_str=start_time_tick.strftime("%Y-%m-%d %H:%M:%S"),
                 end_date_str=end_time_tick.strftime("%Y-%m-%d %H:%M:%S"),
-                cache_dir=self.binance_settings.get("historical_cache_dir"),
+                cache_dir=cache_dir,
                 binance_settings=self.binance_settings,
-                tick_resample_interval_ms=tick_resample_interval_ms # NEW: Pass resampling interval
+                tick_resample_interval_ms=tick_resample_interval_ms
             )
-            # Ensure enough historical ticks for the window size by trimming/padding
             if len(self.historical_ticks_for_obs) < tick_feature_window_size:
                 print(f"WARNING: Fetched tick data ({len(self.historical_ticks_for_obs)} ticks) is less than tick_feature_window_size ({tick_feature_window_size}). Padding with dummy data.")
-                # Pad with dummy data if not enough fetched historical ticks
                 if not self.historical_ticks_for_obs.empty:
                     last_price = self.historical_ticks_for_obs['Price'].iloc[-1]
                     last_qty = self.historical_ticks_for_obs['Quantity'].iloc[-1]
                     last_ism = self.historical_ticks_for_obs['IsBuyerMaker'].iloc[-1]
-                else: # Fallback if no ticks fetched at all
+                else:
                     last_price = self.current_kline_data['Close'].iloc[-1] if not self.current_kline_data.empty else 0.0
                     last_qty = 1.0
                     last_ism = False
@@ -275,12 +271,11 @@ class LiveTrader:
                 )
                 self.historical_ticks_for_obs = pd.concat([dummy_padding_df, self.historical_ticks_for_obs]).sort_index().tail(tick_feature_window_size)
             else:
-                self.historical_ticks_for_obs = self.historical_ticks_for_obs.tail(tick_feature_window_size) # Trim to window size
+                self.historical_ticks_for_obs = self.historical_ticks_for_obs.tail(tick_feature_window_size)
             
-            # Ensure columns expected by env are present after resampling/padding
             for col in self.env_config["tick_features_to_use"]:
                 if col not in self.historical_ticks_for_obs.columns:
-                    self.historical_ticks_for_obs[col] = 0.0 # Add missing columns as zeros
+                    self.historical_ticks_for_obs[col] = 0.0
 
         except Exception as e:
             print(f"ERROR: Failed to load initial historical tick data: {e}. Initializing with full dummy data.")
@@ -302,32 +297,14 @@ class LiveTrader:
         """Callback function for Binance WebSocket aggTrade stream."""
         if msg['e'] == 'error':
             print(f"WebSocket Error: {msg['m']}")
-            # Implement reconnection logic or exit gracefully
             return
         
-        # Aggregate trade message example:
-        # {
-        # 'e': 'aggTrade',     # Event type
-        # 'E': 1499795400000,  # Event time
-        # 's': 'ETHBTC',       # Symbol
-        # 'a': 12345,          # Aggregate tradeId
-        # 'p': '0.001',        # Price
-        # 'q': '100',          # Quantity
-        # 'f': 100,            # First tradeId
-        # 'l': 105,            # Last tradeId
-        # 'T': 1499795400000,  # Trade time
-        # 'm': True,           # Is the buyer the market maker?
-        # 'M': True            # Ignore
-        # }
-        
         if msg['e'] == 'aggTrade':
-            # Extract relevant info
             timestamp = pd.to_datetime(msg['T'], unit='ms', utc=True)
             price = float(msg['p'])
             quantity = float(msg['q'])
-            is_buyer_maker = msg['m'] # True if buyer is market maker
+            is_buyer_maker = msg['m']
             
-            # Put into queue
             self.tick_data_queue.put({'Timestamp': timestamp, 'Price': price, 'Quantity': quantity, 'IsBuyerMaker': is_buyer_maker})
             if self.log_level == "detailed":
                 print(f"Tick received: Time={timestamp}, Price={price:.4f}, Qty={quantity:.4f}, Maker={is_buyer_maker}")
@@ -335,15 +312,14 @@ class LiveTrader:
     def _update_kline_data_live(self):
         """
         Fetches the latest k-line data to keep the environment's k-line context current.
-        Called periodically (e.g., every minute or hour).
         """
-        symbol = self.binance_settings["default_symbol"]
-        interval = self.binance_settings["historical_interval"]
+        symbol = self.run_settings["default_symbol"]
+        interval = self.run_settings["historical_interval"]
+        cache_dir = self.run_settings["historical_cache_dir"]
         kline_window_size = self.env_config["kline_window_size"]
 
-        end_time = datetime.now(timezone.utc) # Get current time
-        # Fetch enough data to cover the kline_window_size
-        start_time = end_time - timedelta(hours=kline_window_size * 2) # Fetch a bit more than window size
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=kline_window_size * 2)
         
         try:
             latest_klines = fetch_and_cache_kline_data(
@@ -351,18 +327,17 @@ class LiveTrader:
                 interval=interval,
                 start_date_str=start_time.strftime("%Y-%m-%d %H:%M:%S"),
                 end_date_str=end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                cache_dir=self.binance_settings.get("historical_cache_dir"),
+                cache_dir=cache_dir,
                 price_features_to_add=self.env_config["kline_price_features"],
                 api_key=self.binance_settings.get("api_key"),
                 api_secret=self.binance_settings.get("api_secret"),
                 testnet=self.binance_settings.get("testnet", True),
-                log_level="none" # Suppress fetching logs for live operation
+                log_level="none"
             )
             if not latest_klines.empty:
-                # Combine new k-lines with existing, remove duplicates, sort
                 combined_df = pd.concat([self.current_kline_data, latest_klines]).drop_duplicates(subset=latest_klines.columns, keep='last')
                 combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
-                combined_df = combined_df.sort_index().tail(kline_window_size + 10) # Keep slightly more than needed
+                combined_df = combined_df.sort_index().tail(kline_window_size + 10)
                 self.current_kline_data = combined_df
                 if self.log_level == "detailed":
                     print(f"K-line data updated. New shape: {self.current_kline_data.shape}. Last candle: {self.current_kline_data.index[-1]}")
@@ -375,40 +350,32 @@ class LiveTrader:
     def _execute_trade(self, action: int, profit_target_param: float, current_price: float):
         """
         Executes a trade (BUY/SELL) via Binance API.
-        This is a placeholder and needs robust order management, error handling,
-        and potentially position tracking.
         """
         trade_success = False
         order_response = None
         
-        # Determine the correct base_env_instance depending on wrappers
         if isinstance(self.env, VecNormalize):
-            base_env_instance = self.env.venv.envs[0].env.env # VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv)))
+            base_env_instance = self.env.venv.envs[0].env.env
         else:
-            base_env_instance = self.env.env # FlattenAction(SimpleTradingEnv)
+            base_env_instance = self.env.env
 
         if not base_env_instance.position_open and action == 1: # BUY
-            # Calculate amount to buy (using a fixed percentage of current balance as in env)
             cash_for_trade = base_env_instance.current_balance * base_env_instance.base_trade_amount_ratio
             units_to_buy_precise = cash_for_trade / (current_price + 1e-9) 
             units_to_buy = max(base_env_instance.min_tradeable_unit, np.floor(units_to_buy_precise / base_env_instance.min_tradeable_unit) * base_env_instance.min_tradeable_unit)
             
             if units_to_buy > 0:
-                print(f"LIVE: Attempting BUY order for {units_to_buy:.6f} {self.binance_settings['default_symbol'][:-4]} at {current_price:.4f}")
+                print(f"LIVE: Attempting BUY order for {units_to_buy:.6f} {self.run_settings['default_symbol'][:-4]} at {current_price:.4f}")
                 try:
-                    # Binance limit order example (can be market order too)
                     order_response = self.client.order_limit_buy(
-                        symbol=self.binance_settings['default_symbol'],
-                        quantity=f"{units_to_buy:.6f}", # Ensure string format for quantity
-                        price=f"{current_price:.4f}" # Ensure string format for price
-                        # Adjust price/quantity precision based on symbol's lot size/price filter
+                        symbol=self.run_settings['default_symbol'],
+                        quantity=f"{units_to_buy:.6f}",
+                        price=f"{current_price:.4f}"
                     )
-                    # For simplicity, assume order is filled immediately for balance tracking
                     filled_qty = float(order_response.get('executedQty', units_to_buy))
                     filled_price = float(order_response.get('fills', [{}])[0].get('price', current_price)) if order_response.get('fills') else current_price
-                    commission_cost = sum(float(f['commission']) for f in order_response.get('fills', []) if f.get('commissionAsset') == 'BNB') # Example for BNB commission
+                    commission_cost = sum(float(f['commission']) for f in order_response.get('fills', []) if f.get('commissionAsset') == 'BNB')
                     
-                    # Update internal env state
                     cost = filled_qty * filled_price + commission_cost
                     base_env_instance.current_balance -= cost
                     base_env_instance.position_open = True
@@ -425,10 +392,10 @@ class LiveTrader:
                 print("LIVE: Not enough units to buy or balance for trade.")
         
         elif base_env_instance.position_open and action == 2: # SELL
-            print(f"LIVE: Attempting SELL order for {base_env_instance.position_volume:.6f} {self.binance_settings['default_symbol'][:-4]} at {current_price:.4f}")
+            print(f"LIVE: Attempting SELL order for {base_env_instance.position_volume:.6f} {self.run_settings['default_symbol'][:-4]} at {current_price:.4f}")
             try:
                 order_response = self.client.order_limit_sell(
-                    symbol=self.binance_settings['default_symbol'],
+                    symbol=self.run_settings['default_symbol'],
                     quantity=f"{base_env_instance.position_volume:.6f}",
                     price=f"{current_price:.4f}"
                 )
@@ -436,7 +403,6 @@ class LiveTrader:
                 filled_price = float(order_response.get('fills', [{}])[0].get('price', current_price)) if order_response.get('fills') else current_price
                 commission_cost = sum(float(f['commission']) for f in order_response.get('fills', []) if f.get('commissionAsset') == 'BNB')
                 
-                # Update internal env state
                 revenue = filled_qty * filled_price - commission_cost
                 pnl = revenue - (base_env_instance.entry_price * base_env_instance.position_volume)
                 base_env_instance.current_balance += revenue
@@ -452,8 +418,8 @@ class LiveTrader:
             except Exception as e:
                 print(f"LIVE: ERROR executing SELL order: {e}")
                 traceback.print_exc()
-        elif action == 0: # HOLD
-            pass # No external action for hold
+        elif action == 0:
+            pass
         
         return trade_success
 
@@ -484,31 +450,23 @@ class LiveTrader:
         
         tick_process_freq_seconds = self.live_trader_settings.get("tick_process_freq_seconds", 1.0)
         kline_update_freq_minutes = self.live_trader_settings.get("kline_update_freq_minutes", 10)
-        action_cooldown_seconds = self.live_trader_settings.get("action_cooldown_seconds", 5) # Prevent rapid actions
+        action_cooldown_seconds = self.live_trader_settings.get("action_cooldown_seconds", 5)
 
         last_kline_update_time = datetime.now(timezone.utc)
         
-        # Initial reset of the environment to get first observation
         try:
-            # Determine the correct base_env_instance depending on wrappers
             if isinstance(self.env, VecNormalize):
-                base_env_instance = self.env.venv.envs[0].env.env # VecNormalize(DummyVecEnv(FlattenAction(SimpleTradingEnv)))
+                base_env_instance = self.env.venv.envs[0].env.env
             else:
-                base_env_instance = self.env.env # FlattenAction(SimpleTradingEnv)
+                base_env_instance = self.env.env
 
-            # We need to manually update the env's tick_df and kline_df with real data
-            # since it's not a regular VecEnv that recreates itself.
             base_env_instance.tick_df = self.historical_ticks_for_obs.copy()
             base_env_instance.kline_df_with_ta = self.current_kline_data.copy()
             
-            # Reset the environment now that it has initial data
-            # Note: For live trading, we mostly just need initial observation.
-            # The 'reset' here will set current_step in SimpleTradingEnv to start_step.
-            initial_obs, initial_info = self.env.reset() # This reset is crucial for env state
+            initial_obs, initial_info = self.env.reset()
             self.current_obs = initial_obs
             self.env_reset_called = True
             
-            # initial_info from VecNormalize/DummyVecEnv reset is a list of dicts
             initial_balance_from_info = initial_info[0].get('current_balance')
             initial_equity_from_info = initial_info[0].get('equity')
             
@@ -522,10 +480,9 @@ class LiveTrader:
             
         while self.running:
             try:
-                # 1. Process incoming ticks from the queue
                 processed_ticks_count = 0
                 while not self.tick_data_queue.empty():
-                    tick = self.tick_data_queue.get(timeout=0.1) # Non-blocking
+                    tick = self.tick_data_queue.get(timeout=0.1)
                     self.historical_ticks_for_obs = pd.concat([self.historical_ticks_for_obs, pd.DataFrame([tick]).set_index('Timestamp')]).tail(self.env_config["tick_feature_window_size"])
                     processed_ticks_count += 1
                 
@@ -536,75 +493,61 @@ class LiveTrader:
                 else:
                     if self.log_level == "detailed":
                         print("No new ticks to process. Waiting...")
-                    # If no ticks, use the last known price for observation/decision
                     if not self.historical_ticks_for_obs.empty:
                         self.last_decision_price = self.historical_ticks_for_obs['Price'].iloc[-1]
                     else:
-                        time.sleep(1) # Wait if no ticks at all
+                        time.sleep(1)
                         continue
                 
-                # Update k-line data periodically
                 if (datetime.now(timezone.utc) - last_kline_update_time).total_seconds() >= kline_update_freq_minutes * 60:
                     self._update_kline_data_live()
                     last_kline_update_time = datetime.now(timezone.utc)
                 
-                # Determine the correct base_env_instance depending on wrappers
                 if isinstance(self.env, VecNormalize):
                     base_env_instance = self.env.venv.envs[0].env.env
                 else:
                     base_env_instance = self.env.env
                 
-                # Update environment's internal dataframes with latest context
                 base_env_instance.tick_df = self.historical_ticks_for_obs.copy()
                 base_env_instance.kline_df_with_ta = self.current_kline_data.copy()
 
-                # Ensure SimpleTradingEnv's current_step points to the latest tick for observation
-                # In live trading, the "current step" is always the latest available data point.
                 if not base_env_instance.tick_df.empty:
-                    base_env_instance.current_step = len(base_env_instance.tick_df) - 1 # FIX: Update current_step
+                    base_env_instance.current_step = len(base_env_instance.tick_df) - 1
                 else:
                     if self.log_level != "none": print("WARNING: Tick data for base env is empty. Cannot update current_step.")
-                    time.sleep(tick_process_freq_seconds) # Avoid tight loop if no data
+                    time.sleep(tick_process_freq_seconds)
                     continue
 
-
-                # Manually create the observation
                 raw_obs_from_env = base_env_instance._get_observation()
                 
                 if self.vec_normalize:
-                    # Reshape for VecNormalize if it's a single observation (1, N)
                     if raw_obs_from_env.ndim == 1:
                         raw_obs_from_env = raw_obs_from_env[np.newaxis, :]
-                    self.current_obs = self.vec_normalize.normalize_obs(raw_obs_from_env).squeeze(0) # FIX: Correct normalization call
+                    self.current_obs = self.vec_normalize.normalize_obs(raw_obs_from_env).squeeze(0)
                 else:
                     self.current_obs = raw_obs_from_env
 
-                # Ensure sufficient data for observation
                 if self.current_obs is None or not len(self.current_obs) == self.env.observation_space.shape[0]:
                     print("WARNING: Observation is not ready or has incorrect shape. Skipping action decision.")
                     time.sleep(tick_process_freq_seconds)
                     continue
 
-                # 2. Agent makes decision based on observation
-                # Only make a decision if enough time has passed since last action
                 if (datetime.now(timezone.utc) - self.last_action_timestamp).total_seconds() < action_cooldown_seconds:
                     if self.log_level == "detailed":
                         print(f"Action cooldown. Next decision in {action_cooldown_seconds - (datetime.now(timezone.utc) - self.last_action_timestamp).total_seconds():.2f}s")
                     time.sleep(tick_process_freq_seconds)
                     continue
                 
-                # Make prediction (action_array is flattened [discrete_choice, profit_target])
                 action_array, _states = self.model.predict(self.current_obs, deterministic=self.live_trader_settings.get("deterministic_prediction", True))
                 
-                discrete_action_for_trade = int(np.round(action_array[0])) # Convert back to discrete (0, 1, 2)
+                discrete_action_for_trade = int(np.round(action_array[0]))
                 profit_target_for_trade = float(np.clip(action_array[1], base_env_instance.config['min_profit_target_low'], base_env_instance.config['min_profit_target_high']))
 
                 print(f"LIVE: Agent decision: Action: {base_env_instance.ACTION_MAP.get(discrete_action_for_trade)}, Profit Target: {profit_target_for_trade:.4f}, Price: {self.last_decision_price:.4f}")
                 
-                # 3. Execute Trade
-                if discrete_action_for_trade != 0: # If not 'Hold'
+                if discrete_action_for_trade != 0:
                     self._execute_trade(discrete_action_for_trade, profit_target_for_trade, self.last_decision_price)
-                    self.last_action_timestamp = datetime.now(timezone.utc) # Reset cooldown timer
+                    self.last_action_timestamp = datetime.now(timezone.utc)
                 else:
                     if self.log_level == "detailed":
                         print("LIVE: Agent decided to HOLD.")
@@ -619,9 +562,9 @@ class LiveTrader:
             except Exception as e:
                 print(f"CRITICAL ERROR in live trading loop: {e}")
                 traceback.print_exc()
-                self.running = False # Stop on critical errors
+                self.running = False
             finally:
-                time.sleep(tick_process_freq_seconds) # Control loop frequency
+                time.sleep(tick_process_freq_seconds)
 
     def _close_connections(self):
         """Closes WebSocket and cleans up."""
@@ -633,7 +576,6 @@ class LiveTrader:
             self.env.close()
             print("Live environment closed.")
         if hasattr(self, 'client') and self.client:
-            # No explicit close for REST client, but ensure no pending operations
             pass 
         print("Live trader connections closed.")
 
@@ -643,16 +585,9 @@ class LiveTrader:
 
 
 if __name__ == "__main__":
-    # Ensure API keys are set as environment variables or provided in config.yaml
-    # Example: export BINANCE_API_KEY="YOUR_KEY"
-    # Example: export BINANCE_API_SECRET="YOUR_SECRET"
-
     live_trader = None
     try:
-        # Pass any config overrides here if needed, e.g., for testnet
-        # config_overrides = {"binance_settings": {"testnet": True}}
-        # live_trader = LiveTrader(config_override=config_overrides)
-        live_trader = LiveTrader() # Loads from config.yaml and defaults
+        live_trader = LiveTrader()
         live_trader.run_live_trading()
     except Exception as e:
         print(f"Failed to start live trader: {e}")

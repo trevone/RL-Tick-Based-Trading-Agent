@@ -1,11 +1,3 @@
 # configs/defaults/evaluation_data.yaml
-evaluation_data:
-  # Date range for evaluation data used by EvalCallback and evaluate_agent.py
-  # These are distinct from training data dates to test generalization.
-  start_date_eval: "2024-01-04 00:00:00"             # Start date for evaluation period (YYYY-MM-DD HH:MM:SS)
-  end_date_eval: "2024-01-04 23:59:59"               # End date for evaluation period (YYYY-MM-DD HH:MM:SS)
-
-  # Note: `n_evaluation_episodes` is now under `run_settings.n_evaluation_episodes`
-  # but kept here for clarity if a separate evaluation data config might re-introduce it.
-  # For now, it's defined once in run_settings.yaml
-}
+# This file is now empty.
+# start_date_eval and end_date_eval have been moved to run_settings.yaml for centralization.

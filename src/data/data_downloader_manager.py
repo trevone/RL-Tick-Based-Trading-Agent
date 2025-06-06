@@ -90,21 +90,23 @@ def _log_deletion_event(file_path: str, reason: str):
 def load_configs_for_data_management(config_dir="configs/defaults") -> dict:
     """Loads configurations for data management tasks."""
     default_config_paths = [
-        os.path.join(config_dir, "run_settings.yaml"), # For log_level if needed by utils
-        os.path.join(config_dir, "binance_settings.yaml") # For historical_cache_dir
+        os.path.join(config_dir, "run_settings.yaml"), # For log_level and historical_cache_dir
+        os.path.join(config_dir, "binance_settings.yaml") # For API keys
     ]
     # Main config.yaml can override defaults
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
 
 def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str):
-    # Load configuration to get historical_cache_dir
+    # Load configuration to get settings
     effective_config = load_configs_for_data_management()
+    run_settings = effective_config.get("run_settings", {})
     binance_settings = effective_config.get("binance_settings", {})
-    # Use historical_cache_dir from config, fallback to a default if not found
-    historical_cache_dir = binance_settings.get("historical_cache_dir", "data_cache/")
     
-    print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}") # Log the cache dir being used
+    # Use historical_cache_dir from run_settings, fallback to a default if not found
+    historical_cache_dir = run_settings.get("historical_cache_dir", "data_cache/")
+    
+    print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
     sys.stdout.flush()
 
     start_date_range = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
@@ -122,7 +124,6 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
         end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
-        # MODIFIED: Pass historical_cache_dir
         file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="agg_trades", cache_dir=historical_cache_dir)
 
         print(f"Processing {symbol} agg_trades for {date_str_for_file}")
@@ -162,13 +163,12 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
             print(f"  Attempting to download and cache data for {date_str_for_file}...")
             sys.stdout.flush()
             try:
-                # MODIFIED: Pass historical_cache_dir
                 data_fetched = fetch_and_cache_tick_data(
                     symbol, 
                     start_datetime_str_for_api, 
                     end_datetime_str_for_api, 
                     cache_dir=historical_cache_dir, 
-                    log_level='normal', # Keep log_level for fetcher concise
+                    log_level='normal',
                     api_key=binance_settings.get("api_key"),
                     api_secret=binance_settings.get("api_secret"),
                     testnet=binance_settings.get("testnet", False),
@@ -185,7 +185,7 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
                 sys.stdout.flush()
 
         if data_fetched is not None and not data_fetched.empty:
-            if not os.path.exists(file_path): # File might not exist if fetch failed silently or saved to different name by fetcher
+            if not os.path.exists(file_path):
                  print(f"  Validation skipped for {symbol} on {date_str_for_file} as file {file_path} does not exist (download might have failed or path mismatch).")
                  sys.stdout.flush()
             else:
@@ -218,12 +218,15 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
 
 
 def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str, interval: str, price_features_to_add: list):
-    # Load configuration to get historical_cache_dir
+    # Load configuration to get settings
     effective_config = load_configs_for_data_management()
+    run_settings = effective_config.get("run_settings", {})
     binance_settings = effective_config.get("binance_settings", {})
-    historical_cache_dir = binance_settings.get("historical_cache_dir", "data_cache/") # Fallback
+    
+    # Use historical_cache_dir from run_settings, fallback
+    historical_cache_dir = run_settings.get("historical_cache_dir", "data_cache/")
 
-    print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}") # Log the cache dir being used
+    print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
     sys.stdout.flush()
 
     start_date_range = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
@@ -239,7 +242,6 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
         start_datetime_str_for_api = day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
         end_datetime_str_for_api = day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S") 
 
-        # MODIFIED: Pass historical_cache_dir
         file_path = get_data_path_for_day(date_str_for_file, symbol, data_type="kline", 
                                         interval=interval, price_features_to_add=price_features_to_add,
                                         cache_dir=historical_cache_dir)
@@ -280,7 +282,6 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
             print(f"  Attempting to download and cache K-line data for {date_str_for_file}...")
             sys.stdout.flush()
             try:
-                # MODIFIED: Pass historical_cache_dir
                 data_fetched = fetch_and_cache_kline_data(
                     symbol=symbol,
                     interval=interval,
