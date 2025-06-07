@@ -11,8 +11,7 @@ class LossAverseEnv(ProfitTargetEnv):
         obs, reward, terminated, truncated, info = super().step(action_tuple)
         discrete_action, _ = action_tuple
 
-        if discrete_action == 0 and self.position_open:
-            current_price = info.get('current_tick_price', self.entry_price)
-            if current_price < self.entry_price:
+        if discrete_action == 0 and info.get('position_open'):
+            if info.get('current_tick_price') < self.entry_price:
                 reward += self.loss_aversion_penalty
         return obs, reward, terminated, truncated, info
