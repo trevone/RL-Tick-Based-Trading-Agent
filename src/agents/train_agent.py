@@ -237,14 +237,14 @@ def train_agent(
         except Exception as e_vn_load:
             if current_log_level != "none": print(f"Retraining: Failed to load VecNormalize stats: {e_vn_load}. Initializing new stats.")
             traceback.print_exc()
-            env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
+            env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=True, clip_obs=10.)
     else:
         if current_log_level != "none":
             if run_settings.get("continue_from_existing_model", False):
                  print(f"Retraining: VecNormalize stats not found at {current_run_vec_normalize_path}. Initializing new stats.")
             else:
                  print("Initializing new VecNormalize stats.")
-        env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=False, clip_obs=10.)
+        env = VecNormalize(vec_env_for_norm, norm_obs=True, norm_reward=True, clip_obs=10.)
 
     if current_log_level != "none": print(f"\nTraining Environment (VecNormalize) created: Obs Space {env.observation_space.shape}, Act Space {env.action_space.shape}")
 

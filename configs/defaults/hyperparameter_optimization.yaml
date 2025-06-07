@@ -6,7 +6,7 @@ hyperparameter_optimization:
   db_file: "study.db"                         # SQLite database file for the study results
   load_if_exists: True                        # Load existing study if it exists
   direction: "maximize"                       # Direction of optimization: "maximize" or "minimize"
-  n_trials: 100                               # Total number of trials to run
+  n_trials: 50                                # Total number of trials to run
   timeout_seconds: null                       # Timeout for the optimization process in seconds (null for no timeout)
 
   # Sampler configuration
@@ -21,7 +21,7 @@ hyperparameter_optimization:
 
   # Total timesteps for each individual training trial during optimization.
   # This is often set lower than the full training total_timesteps to speed up HPO.
-  trial_total_timesteps: 50000
+  trial_total_timesteps: 1000000
 
   # Define hyperparameter search spaces for different agent types.
   # The keys here should match the 'agent_type' in your main config.yaml.
@@ -35,9 +35,6 @@ hyperparameter_optimization:
     gamma:
       low: 0.9
       high: 0.999
-    ent_coef:                       # Entropy coefficient (encourages exploration)
-      low: 0.0
-      high: 0.05
     policy_kwargs_net_arch:
       choices: ["[32, 32]", "[64, 64]", "[128, 128]"] # Network architecture as string to be eval'd
 

@@ -31,7 +31,7 @@ environment:
   # General trading parameters
   initial_balance: 10000.0
   commission_pct: 0.001                # Commission per trade (0.1%)
-  base_trade_amount_ratio: 0.1         # Proportion of initial_balance to commit to a trade
+  base_trade_amount_ratio: 0.02        # Proportion of initial_balance to commit to a trade
   min_tradeable_unit: 1e-6             # Smallest unit of asset that can be traded (e.g., BTC)
   catastrophic_loss_threshold_pct: 0.3 # Episode terminates if equity drops below this % of initial
   obs_clip_low: -5.0                   # Clip observation values to prevent extreme outliers

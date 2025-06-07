@@ -6,26 +6,34 @@ binance_settings:
   testnet: false 
 
 run_settings:
+  env_type: "loss_averse_env"
   log_level: "normal"
+  model_name: "profit_target_env"
   continue_from_existing_model: true
   default_symbol: "BTCUSDT"
   historical_interval: "1h"
   start_date_train: "2025-01-01 00:00:00"
   end_date_train: "2025-02-01 23:59:59"
-  start_date_eval: "2025-02-02 13:00:00"
+  start_date_eval: "2025-02-02 00:00:00"
   end_date_eval: "2025-02-09 23:59:59"
 
+  eval_freq_episodes: 5
+  stop_training_patience_evals: 10
+
 environment:
-  kline_window_size: 3
+  profit_target_pct: 0.0025
+  reward_factor_above_target: 60.0
+  kline_window_size: 20
   kline_price_features:
     - "Open"
     - "High"
     - "Low"
-    - "Close"
+    #- "Close"
     - "Volume" 
-    - "RSI_7"   
+    - "SMA_7"
+    - "SMA_14"
 
-  tick_feature_window_size: 10
+  tick_feature_window_size: 50
   tick_features_to_use:
     - "Price"
     - "Quantity"
@@ -33,7 +41,7 @@ environment:
   tick_resample_interval_ms: 60000   
 
 ppo_params:
-  total_timesteps: 200000
+  total_timesteps: 1000000
   learning_rate: 0.0003
   n_steps: 2048
   batch_size: 64
@@ -46,5 +54,5 @@ ppo_params:
   max_grad_norm: 0.5
   target_kl: 0.02
   policy_kwargs:
-    net_arch: [64, 64]
+    net_arch: [128, 64]
  
