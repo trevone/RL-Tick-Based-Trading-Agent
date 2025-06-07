@@ -5,39 +5,18 @@ import numpy as np
 import pandas as pd
 import json
 import os
-import traceback
 
 DEFAULT_ENV_CONFIG = {
     "kline_window_size": 20,
-    "kline_price_features": ["Open", "High", "Low", "Close", "Volume"],
     "tick_feature_window_size": 50,
+    "kline_price_features": ["Open", "High", "Low", "Close", "Volume"],
     "tick_features_to_use": ["Price", "Quantity"],
     "initial_balance": 10000.0,
     "commission_pct": 0.001,
-    "base_trade_amount_ratio": 0.1,
-    "min_tradeable_unit": 1e-6,
+    "base_trade_amount_ratio": 0.02,
     "catastrophic_loss_threshold_pct": 0.3,
-    "obs_clip_low": -5.0,
-    "obs_clip_high": 5.0,
-    "min_profit_target_low": 0.001,
-    "min_profit_target_high": 0.05,
-    "reward_open_buy_position": 0.0,
-    "penalty_buy_insufficient_balance": -0.1,
-    "penalty_buy_position_already_open": -0.05,
-    "reward_sell_profit_base": 0.1,
-    "reward_sell_profit_factor": 10.0,
-    "penalty_sell_loss_factor": 10.0,
-    "penalty_sell_loss_base": -0.01,
-    "penalty_sell_no_position": -0.1,
-    "reward_hold_profitable_position": 0.0001,
-    "penalty_hold_losing_position": -0.0005,
-    "penalty_hold_flat_position": -0.0001,
-    "penalty_catastrophic_loss": -100.0,
-    "reward_eof_sell_factor": 5.0,
-    "reward_sell_meets_target_bonus": 0.5,
-    "penalty_sell_profit_below_target": -0.05,
-    "custom_print_render": "none",
     "log_level": "normal",
+    "penalty_catastrophic_loss": -100.0,
 }
 
 class SimpleTradingEnv(gym.Env):
@@ -48,36 +27,26 @@ class SimpleTradingEnv(gym.Env):
         super().__init__()
         self.config = {**DEFAULT_ENV_CONFIG, **(config if config else {})}
 
+        if tick_df.empty: raise ValueError("tick_df must be non-empty.")
         self.tick_df = tick_df.copy()
         self.kline_df_with_ta = kline_df_with_ta.copy()
 
-        if not isinstance(self.kline_df_with_ta.index, pd.DatetimeIndex) and not self.kline_df_with_ta.empty:
-            self.kline_df_with_ta.index = pd.to_datetime(self.kline_df_with_ta.index)
-        if not self.kline_df_with_ta.empty and not self.kline_df_with_ta.index.is_monotonic_increasing:
-            self.kline_df_with_ta.sort_index(inplace=True)
+        if not self.kline_df_with_ta.empty:
+            if not isinstance(self.kline_df_with_ta.index, pd.DatetimeIndex): self.kline_df_with_ta.index = pd.to_datetime(self.kline_df_with_ta.index)
+            if not self.kline_df_with_ta.index.is_monotonic_increasing: self.kline_df_with_ta.sort_index(inplace=True)
 
-        self.kline_window_size = int(self.config["kline_window_size"])
-        self.tick_feature_window_size = int(self.config["tick_feature_window_size"])
-        self.tick_features_to_use = self.config.get("tick_features_to_use", ["Price"])
         self.initial_balance = float(self.config["initial_balance"])
         self.commission_pct = float(self.config["commission_pct"])
         self.base_trade_amount_ratio = float(self.config["base_trade_amount_ratio"])
         self.catastrophic_loss_limit = self.initial_balance * (1.0 - float(self.config["catastrophic_loss_threshold_pct"]))
-        self.log_level = self.config.get("log_level", "normal")
         
-        self.action_space = spaces.Tuple((
-            spaces.Discrete(3),
-            spaces.Box(
-                low=float(self.config["min_profit_target_low"]),
-                high=float(self.config["min_profit_target_high"]),
-                shape=(1,), dtype=np.float32
-            )
-        ))
-
-        self.num_tick_features_per_step = len(self.tick_features_to_use)
-        self.num_kline_features_per_step = len(self.config.get("kline_price_features", []))
-        obs_shape_dim = (self.tick_feature_window_size * self.num_tick_features_per_step) + \
-                        (self.kline_window_size * self.num_kline_features_per_step) + 3
+        self.action_space = spaces.Tuple((spaces.Discrete(3), spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)))
+        
+        num_tick_features = len(self.config["tick_features_to_use"])
+        num_kline_features = len(self.config["kline_price_features"])
+        self.tick_feature_window_size = int(self.config["tick_feature_window_size"])
+        self.kline_window_size = int(self.config["kline_window_size"])
+        obs_shape_dim = (self.tick_feature_window_size * num_tick_features) + (self.kline_window_size * num_kline_features) + 3
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_shape_dim,), dtype=np.float32)
 
         self._prepare_data()
@@ -85,134 +54,79 @@ class SimpleTradingEnv(gym.Env):
         self.reset()
 
     def _prepare_data(self):
-        if self.tick_df.empty:
-            self.decision_prices, self.start_step, self.end_step = np.array([]), 0, -1
-            self.tick_price_data = {}
-            self.kline_feature_arrays = {}
-            return
-        if not isinstance(self.tick_df.index, pd.DatetimeIndex):
-            self.tick_df.index = pd.to_datetime(self.tick_df.index)
+        if not isinstance(self.tick_df.index, pd.DatetimeIndex): self.tick_df.index = pd.to_datetime(self.tick_df.index)
         self.tick_df.sort_index(inplace=True)
-        self.tick_price_data = {name: self.tick_df[name].values.astype(np.float32) for name in self.tick_features_to_use}
-        self.decision_prices = self.tick_price_data.get('Price', np.array([]))
+        self.tick_price_data = {name: self.tick_df[name].values.astype(np.float32) for name in self.config["tick_features_to_use"]}
+        self.decision_prices = self.tick_price_data['Price']
         self.kline_feature_arrays = {name: self.kline_df_with_ta[name].values.astype(np.float32) for name in self.config["kline_price_features"] if name in self.kline_df_with_ta}
         self.start_step = self.tick_feature_window_size - 1
         self.end_step = len(self.tick_df) - 1
 
     def _get_observation(self) -> np.ndarray:
-        if self.tick_df.empty: return np.zeros(self.observation_space.shape, dtype=np.float32)
         safe_step = min(self.current_step, self.end_step)
-        
         tick_start_idx = max(0, safe_step - self.tick_feature_window_size + 1)
-        tick_features_list = []
-        for name in self.tick_features_to_use:
-            arr = self.tick_price_data[name][tick_start_idx : safe_step + 1]
+        tick_features_list = [self.tick_price_data[name][tick_start_idx:safe_step + 1] for name in self.config["tick_features_to_use"]]
+        
+        for i, arr in enumerate(tick_features_list):
             if len(arr) < self.tick_feature_window_size:
                 padding = np.full(self.tick_feature_window_size - len(arr), arr[0] if len(arr) > 0 else 0)
-                arr = np.concatenate((padding, arr))
-            tick_features_list.append(arr)
+                tick_features_list[i] = np.concatenate((padding, arr))
         tick_features = np.concatenate(tick_features_list)
 
-        kline_features = np.zeros(self.kline_window_size * self.num_kline_features_per_step, dtype=np.float32)
+        kline_features = np.zeros(self.kline_window_size * len(self.config["kline_price_features"]), dtype=np.float32)
         if not self.kline_df_with_ta.empty:
-            current_ts = self.tick_df.index[safe_step]
-            kline_idx = self.kline_df_with_ta.index.get_indexer([current_ts], method='ffill')[0]
+            kline_idx = self.kline_df_with_ta.index.get_indexer([self.tick_df.index[safe_step]], method='ffill')[0]
             if kline_idx != -1:
                 kline_start_idx = max(0, kline_idx - self.kline_window_size + 1)
-                kline_features_list = []
-                for name in self.config["kline_price_features"]:
-                    series = self.kline_feature_arrays.get(name, np.zeros(len(self.kline_df_with_ta)))
-                    arr = series[kline_start_idx : kline_idx + 1]
+                kline_features_list = [self.kline_feature_arrays[name][kline_start_idx:kline_idx + 1] for name in self.config["kline_price_features"]]
+                for i, arr in enumerate(kline_features_list):
                     if len(arr) < self.kline_window_size:
-                        padding = np.full(self.kline_window_size - len(arr), arr[0] if len(arr) > 0 else 0)
-                        arr = np.concatenate((padding, arr))
-                    kline_features_list.append(arr)
+                         padding = np.full(self.kline_window_size - len(arr), arr[0] if len(arr) > 0 else 0)
+                         kline_features_list[i] = np.concatenate((padding, arr))
                 if kline_features_list: kline_features = np.concatenate(kline_features_list)
 
         price = self.decision_prices[safe_step]
-        pos_open = 1.0 if self.position_open else 0.0
-        entry_price_norm = (self.entry_price / price - 1) if self.position_open and price > 1e-9 else 0.0
-        pnl_norm = ((price - self.entry_price) * self.position_volume) / self.initial_balance if self.position_open else 0.0
-        portfolio_state = np.array([pos_open, entry_price_norm, pnl_norm], dtype=np.float32)
-        
-        return np.clip(np.concatenate([tick_features, kline_features, portfolio_state]), self.config["obs_clip_low"], self.config["obs_clip_high"])
+        portfolio_state = np.array([1.0 if self.position_open else 0.0, (self.entry_price / price - 1) if self.position_open and price > 1e-9 else 0.0, ((price - self.entry_price) * self.position_volume) / self.initial_balance if self.position_open else 0.0], dtype=np.float32)
+        return np.concatenate([tick_features, kline_features, portfolio_state])
 
     def _get_info(self) -> dict:
-        price = self.decision_prices[min(self.current_step, self.end_step)] if not self.tick_df.empty else 0
+        price = self.decision_prices[min(self.current_step, self.end_step)]
         equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-        return {
-            "current_step": self.current_step, "current_tick_price": price,
-            "current_balance": self.current_balance, "equity": equity,
-            "position_open": self.position_open, "entry_price": self.entry_price,
-            "position_volume": self.position_volume
-        }
+        return {"current_step": self.current_step, "equity": equity, "position_open": self.position_open}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.current_balance = self.initial_balance
-        self.position_open = False
-        self.entry_price = 0.0
-        self.position_volume = 0.0
+        self.current_balance, self.position_open, self.entry_price, self.position_volume = self.initial_balance, False, 0.0, 0.0
         self.current_step = self.start_step
-        self.trade_history = [{'type': 'initial_balance', 'equity': self.initial_balance}]
+        self.trade_history = []
         return self._get_observation(), self._get_info()
 
     def step(self, action_tuple):
         discrete_action, _ = action_tuple
-        if isinstance(discrete_action, np.integer): discrete_action = int(discrete_action)
-        
-        reward = 0.0
-        terminated, truncated = False, False
+        reward, terminated, truncated = 0.0, False, False
         price = self.decision_prices[self.current_step]
 
         if discrete_action == 1 and not self.position_open:
-            trade_size = self.initial_balance * self.base_trade_amount_ratio
-            volume = (trade_size / price)
-            cost = volume * price * (1 + self.commission_pct)
+            cost = (self.initial_balance * self.base_trade_amount_ratio) * (1 + self.commission_pct)
             if self.current_balance >= cost:
+                self.position_volume = (self.initial_balance * self.base_trade_amount_ratio) / price
                 self.current_balance -= cost
-                self.position_open = True
-                self.entry_price = price
-                self.position_volume = volume
-                self.trade_history.append({'type': 'buy', 'price': price, 'volume': volume})
-                reward += self.config["reward_open_buy_position"]
-
+                self.position_open, self.entry_price = True, price
         elif discrete_action == 2 and self.position_open:
             revenue = self.position_volume * price * (1 - self.commission_pct)
-            pnl = revenue - (self.position_volume * self.entry_price)
+            reward = revenue - (self.position_volume * self.entry_price) # Reward is PnL
             self.current_balance += revenue
-            reward = pnl
-            self.position_open = False
-            self.position_volume = 0.0
-            self.entry_price = 0.0
-            self.trade_history.append({'type': 'sell', 'price': price, 'pnl': pnl})
-
-        elif discrete_action == 0: # HOLD
-            # CORRECTED: Added this logic back in
-            if self.position_open:
-                if price < self.entry_price:
-                    reward += self.config["penalty_hold_losing_position"]
-                else:
-                    reward += self.config["reward_hold_profitable_position"]
-            else:
-                reward += self.config["penalty_hold_flat_position"]
+            self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
 
         self.current_step += 1
-        
         equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-        if equity < self.catastrophic_loss_limit:
-            terminated = True
-            reward += self.config["penalty_catastrophic_loss"]
-        if self.current_step > self.end_step:
-            truncated = True
+        if equity < self.catastrophic_loss_limit: terminated = True; reward += self.config["penalty_catastrophic_loss"]
+        if self.current_step > self.end_step: truncated = True
         
         if (terminated or truncated) and self.position_open:
-            pnl = (self.position_volume * price * (1 - self.commission_pct)) - (self.position_volume * self.entry_price)
             self.current_balance += self.position_volume * price * (1 - self.commission_pct)
             self.position_open = False
-            self.trade_history.append({'type': 'sell_auto', 'price': price, 'pnl': pnl})
 
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
-    def close(self):
-        pass
+    def close(self): pass
