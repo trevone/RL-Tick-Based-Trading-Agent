@@ -3,20 +3,18 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import pandas as pd
-import json
-import os
 
+# CORRECTED: Added the missing penalty/reward keys back to the default config.
 DEFAULT_ENV_CONFIG = {
-    "kline_window_size": 20,
-    "tick_feature_window_size": 50,
+    "kline_window_size": 20, "tick_feature_window_size": 50,
     "kline_price_features": ["Open", "High", "Low", "Close", "Volume"],
     "tick_features_to_use": ["Price", "Quantity"],
-    "initial_balance": 10000.0,
-    "commission_pct": 0.001,
-    "base_trade_amount_ratio": 0.02,
-    "catastrophic_loss_threshold_pct": 0.3,
-    "log_level": "normal",
-    "penalty_catastrophic_loss": -100.0,
+    "initial_balance": 10000.0, "commission_pct": 0.001,
+    "base_trade_amount_ratio": 0.02, "catastrophic_loss_threshold_pct": 0.3,
+    "penalty_catastrophic_loss": -100.0, "log_level": "normal",
+    "penalty_hold_flat_position": -0.0001,
+    "penalty_hold_losing_position": -0.0005,
+    "reward_hold_profitable_position": 0.0001,
 }
 
 class SimpleTradingEnv(gym.Env):
@@ -42,15 +40,13 @@ class SimpleTradingEnv(gym.Env):
         
         self.action_space = spaces.Tuple((spaces.Discrete(3), spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)))
         
-        num_tick_features = len(self.config["tick_features_to_use"])
-        num_kline_features = len(self.config["kline_price_features"])
         self.tick_feature_window_size = int(self.config["tick_feature_window_size"])
         self.kline_window_size = int(self.config["kline_window_size"])
-        obs_shape_dim = (self.tick_feature_window_size * num_tick_features) + (self.kline_window_size * num_kline_features) + 3
+        obs_shape_dim = (self.tick_feature_window_size * len(self.config["tick_features_to_use"])) + \
+                        (self.kline_window_size * len(self.config["kline_price_features"])) + 3
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_shape_dim,), dtype=np.float32)
 
         self._prepare_data()
-        self.env_id = f"STE-{os.getpid()}"
         self.reset()
 
     def _prepare_data(self):
@@ -59,31 +55,29 @@ class SimpleTradingEnv(gym.Env):
         self.tick_price_data = {name: self.tick_df[name].values.astype(np.float32) for name in self.config["tick_features_to_use"]}
         self.decision_prices = self.tick_price_data['Price']
         self.kline_feature_arrays = {name: self.kline_df_with_ta[name].values.astype(np.float32) for name in self.config["kline_price_features"] if name in self.kline_df_with_ta}
-        self.start_step = self.tick_feature_window_size - 1
-        self.end_step = len(self.tick_df) - 1
+        self.start_step, self.end_step = self.tick_feature_window_size - 1, len(self.tick_df) - 1
 
     def _get_observation(self) -> np.ndarray:
         safe_step = min(self.current_step, self.end_step)
         tick_start_idx = max(0, safe_step - self.tick_feature_window_size + 1)
-        tick_features_list = [self.tick_price_data[name][tick_start_idx:safe_step + 1] for name in self.config["tick_features_to_use"]]
-        
-        for i, arr in enumerate(tick_features_list):
-            if len(arr) < self.tick_feature_window_size:
-                padding = np.full(self.tick_feature_window_size - len(arr), arr[0] if len(arr) > 0 else 0)
-                tick_features_list[i] = np.concatenate((padding, arr))
+        tick_features_list = []
+        for name in self.config["tick_features_to_use"]:
+            arr = self.tick_price_data[name][tick_start_idx:safe_step + 1]; padding = self.tick_feature_window_size - len(arr)
+            if padding > 0: arr = np.concatenate((np.full(padding, arr[0] if len(arr) > 0 else 0), arr))
+            tick_features_list.append(arr)
         tick_features = np.concatenate(tick_features_list)
 
         kline_features = np.zeros(self.kline_window_size * len(self.config["kline_price_features"]), dtype=np.float32)
-        if not self.kline_df_with_ta.empty:
+        if not self.kline_df_with_ta.empty and self.kline_df_with_ta.index.get_indexer([self.tick_df.index[safe_step]], method='ffill')[0] != -1:
             kline_idx = self.kline_df_with_ta.index.get_indexer([self.tick_df.index[safe_step]], method='ffill')[0]
-            if kline_idx != -1:
-                kline_start_idx = max(0, kline_idx - self.kline_window_size + 1)
-                kline_features_list = [self.kline_feature_arrays[name][kline_start_idx:kline_idx + 1] for name in self.config["kline_price_features"]]
-                for i, arr in enumerate(kline_features_list):
-                    if len(arr) < self.kline_window_size:
-                         padding = np.full(self.kline_window_size - len(arr), arr[0] if len(arr) > 0 else 0)
-                         kline_features_list[i] = np.concatenate((padding, arr))
-                if kline_features_list: kline_features = np.concatenate(kline_features_list)
+            kline_start_idx = max(0, kline_idx - self.kline_window_size + 1)
+            kline_features_list = []
+            for name in self.config["kline_price_features"]:
+                series = self.kline_feature_arrays.get(name, np.zeros(len(self.kline_df_with_ta)))
+                arr = series[kline_start_idx:kline_idx + 1]; padding = self.kline_window_size - len(arr)
+                if padding > 0: arr = np.concatenate((np.full(padding, arr[0] if len(arr) > 0 else 0), arr))
+                kline_features_list.append(arr)
+            if kline_features_list: kline_features = np.concatenate(kline_features_list)
 
         price = self.decision_prices[safe_step]
         portfolio_state = np.array([1.0 if self.position_open else 0.0, (self.entry_price / price - 1) if self.position_open and price > 1e-9 else 0.0, ((price - self.entry_price) * self.position_volume) / self.initial_balance if self.position_open else 0.0], dtype=np.float32)
@@ -92,13 +86,12 @@ class SimpleTradingEnv(gym.Env):
     def _get_info(self) -> dict:
         price = self.decision_prices[min(self.current_step, self.end_step)]
         equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-        return {"current_step": self.current_step, "equity": equity, "position_open": self.position_open}
+        return {"current_step": self.current_step, "equity": equity, "position_open": self.position_open, "current_tick_price": price}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_balance, self.position_open, self.entry_price, self.position_volume = self.initial_balance, False, 0.0, 0.0
         self.current_step = self.start_step
-        self.trade_history = []
         return self._get_observation(), self._get_info()
 
     def step(self, action_tuple):
@@ -114,9 +107,17 @@ class SimpleTradingEnv(gym.Env):
                 self.position_open, self.entry_price = True, price
         elif discrete_action == 2 and self.position_open:
             revenue = self.position_volume * price * (1 - self.commission_pct)
-            reward = revenue - (self.position_volume * self.entry_price) # Reward is PnL
+            reward = revenue - (self.position_volume * self.entry_price)
             self.current_balance += revenue
             self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
+        elif discrete_action == 0:
+            if self.position_open:
+                if price < self.entry_price:
+                    reward += self.config["penalty_hold_losing_position"]
+                else:
+                    reward += self.config.get("reward_hold_profitable_position", 0.0) # Use .get for safety
+            else:
+                reward += self.config["penalty_hold_flat_position"]
 
         self.current_step += 1
         equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
