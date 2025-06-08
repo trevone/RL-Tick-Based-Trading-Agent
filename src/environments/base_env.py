@@ -103,40 +103,61 @@ class SimpleTradingEnv(gym.Env):
         reward, terminated, truncated = 0.0, False, False
         price = self.decision_prices[self.current_step]
 
-        if discrete_action == 1: # BUY
+        # --- Define simple reward constants for rule adherence ---
+        REWARD_CORRECT_TRADE_ACTION = 1.0    # Reward for BUY when flat, SELL when in position
+        PENALTY_INCORRECT_TRADE_ACTION = -1.0 # Penalty for BUY when in position, SELL when flat
+        PENALTY_HOLD_ACTION = -0.05          # Small penalty for HOLD to encourage trading actions
+
+        # --- Action: BUY (discrete_action == 1) ---
+        if discrete_action == 1:
             if not self.position_open:
+                # Agent correctly attempts to BUY when FLAT
                 cost = (self.initial_balance * self.base_trade_amount_ratio) * (1 + self.commission_pct)
-                if self.current_balance >= cost:
+                if self.current_balance >= cost: # Check if balance is sufficient
                     self.position_volume = (self.initial_balance * self.base_trade_amount_ratio) / price
                     self.current_balance -= cost
                     self.position_open, self.entry_price = True, price
+                    reward += REWARD_CORRECT_TRADE_ACTION
+                else:
+                    # Penalize: Correct intent (BUY when flat) but insufficient funds
+                    # This teaches the agent about balance constraints indirectly
+                    reward += PENALTY_INCORRECT_TRADE_ACTION / 2 # Smaller penalty than a completely wrong action type
             else:
-                reward += self.config["penalty_buy_position_already_open"]
+                # Agent incorrectly attempts to BUY when already IN POSITION
+                reward += PENALTY_INCORRECT_TRADE_ACTION
 
-        elif discrete_action == 2: # SELL
+        # --- Action: SELL (discrete_action == 2) ---
+        elif discrete_action == 2:
             if self.position_open:
+                # Agent correctly attempts to SELL when IN POSITION
                 revenue = self.position_volume * price * (1 - self.commission_pct)
-                reward = revenue - (self.position_volume * self.entry_price)
                 self.current_balance += revenue
                 self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
+                reward += REWARD_CORRECT_TRADE_ACTION
             else:
-                # CORRECTED: Consistent direct access
-                reward += self.config["penalty_sell_no_position"]
+                # Agent incorrectly attempts to SELL when FLAT
+                reward += PENALTY_INCORRECT_TRADE_ACTION
 
-        elif discrete_action == 0: # HOLD
-            if self.position_open:
-                if price < self.entry_price:
-                    reward += self.config["penalty_hold_losing_position"]
-                #else:
-                    #reward += self.config["reward_hold_profitable_position"]
-            else:
-                reward += self.config["penalty_hold_flat_position"]
+        # --- Action: HOLD (discrete_action == 0) ---
+        elif discrete_action == 0:
+            # Penalize HOLD to encourage the agent to take BUY/SELL actions
+            # regardless of position status initially, then learn the rules.
+            reward += PENALTY_HOLD_ACTION
 
+        # --- Common logic for advancing step and checking for termination ---
         self.current_step += 1
-        equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-        if equity < self.catastrophic_loss_limit: terminated = True; reward += self.config["penalty_catastrophic_loss"]
-        if self.current_step > self.end_step: truncated = True
+        current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
+
+        # Catastrophic loss: Still a hard termination and significant penalty
+        if current_equity < self.catastrophic_loss_limit:
+            terminated = True
+            reward += self.config["penalty_catastrophic_loss"]
+
+        # End of data: Episode truncated
+        if self.current_step > self.end_step:
+            truncated = True
         
+        # Force close any open position at the end of the episode to clean up
         if (terminated or truncated) and self.position_open:
             self.current_balance += self.position_volume * price * (1 - self.commission_pct)
             self.position_open = False
