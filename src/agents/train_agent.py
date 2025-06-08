@@ -10,7 +10,8 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 warnings.filterwarnings("ignore", category=UserWarning, module="stable_baselines3")
 
-from stable_baselines3 import PPO
+# CORRECTED: Added all required agent imports
+from stable_baselines3 import PPO, SAC, DDPG, A2C
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -98,10 +99,9 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
     model = None
     model_loaded = False
     device = run_settings.get("device", "cpu")
-    model_class = {"PPO": PPO, "RecurrentPPO": RecurrentPPO if SB3_CONTRIB_AVAILABLE else None}.get(agent_type)
+    model_class = {"PPO": PPO, "SAC": SAC, "DDPG": DDPG, "A2C": A2C, "RecurrentPPO": RecurrentPPO if SB3_CONTRIB_AVAILABLE else None}.get(agent_type)
     if not model_class: raise ValueError(f"Agent type {agent_type} not supported.")
 
-    # --- THIS IS THE CORRECTED LOGIC TO LOAD AN EXISTING MODEL ---
     if run_settings.get("continue_from_existing_model"):
         potential_path = os.path.join(model_save_dir, "best_model.zip")
         if os.path.exists(potential_path):
@@ -113,7 +113,6 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
         print("\n--- Initializing new model ---")
         policy = "MlpLstmPolicy" if agent_type == "RecurrentPPO" else "MlpPolicy"
         
-        # FIXED: Ensure total_timesteps is not passed to constructor
         params_for_init = algo_params.copy()
         params_for_init.pop("total_timesteps", None)
         
@@ -128,7 +127,7 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
         model.learn(
             total_timesteps=int(algo_params.get("total_timesteps", 1000000)),
             callback=eval_callback,
-            reset_num_timesteps=not model_loaded, # Continue counter if retraining
+            reset_num_timesteps=not model_loaded,
             progress_bar=True,
             tb_log_name=run_id
         )
@@ -137,7 +136,7 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
     finally:
         print("Saving final model and normalization stats...")
         model.save(os.path.join(log_dir, "final_model.zip"))
-        env.save(vec_normalize_path)
+        env.save(os.path.join(log_dir, "vec_normalize.pkl"))
         env.close()
 
 if __name__ == "__main__":

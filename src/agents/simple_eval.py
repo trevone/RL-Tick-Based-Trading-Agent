@@ -9,11 +9,11 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 # --- Custom Project Imports ---
-from .agent_utils import load_default_configs_for_evaluation
-from ..environments.env_loader import load_environments
-from ..environments.custom_wrappers import FlattenAction
-from ..data.data_loader import load_kline_data_for_range, load_tick_data_for_range
-from ..utils import resolve_model_path
+from src.agents.agent_utils import load_default_configs_for_evaluation
+from src.environments.env_loader import load_environments
+from src.environments.custom_wrappers import FlattenAction
+from src.data.data_loader import load_kline_data_for_range, load_tick_data_for_range
+from src.utils import resolve_model_path
 
 
 def main():
@@ -26,6 +26,7 @@ def main():
 
     print("--- Starting Simple Evaluation ---")
     
+    # 1. Load the complete, merged configuration
     config = load_default_configs_for_evaluation()
     
     if args.run_id:
@@ -35,6 +36,7 @@ def main():
         except IndexError:
             print(f"Warning: Could not parse model_name from run_id '{args.run_id}'. Using config default.")
 
+    # 2. Automatically find the model path
     model_path, _ = resolve_model_path(config)
     
     vec_normalize_path = None
@@ -44,41 +46,30 @@ def main():
 
     if not model_path or not os.path.exists(vec_normalize_path):
         print("\nERROR: Could not find model path or vec_normalize.pkl path.")
-        print(f"Attempted to find model: {model_path}")
-        print(f"Attempted to find VecNormalize: {vec_normalize_path}")
         return
 
     print(f"\nModel Path: {model_path}")
     print(f"VecNormalize Path: {vec_normalize_path}\n")
 
+    # 3. Get settings from the loaded config
     env_config = config["environment"]
     run_settings = config["run_settings"]
     binance_settings = config["binance_settings"]
     agent_type = config.get("agent_type", "PPO")
     env_type = run_settings.get("env_type", "simple")
     
-    cache_dir = run_settings.get("historical_cache_dir", "data/")
-    start_date = run_settings.get("start_date_eval")
-    end_date = run_settings.get("end_date_eval")
-    symbol = run_settings.get("default_symbol")
-    interval = run_settings.get("historical_interval")
-    
-    env_config['log_level'] = 'none'
-
-    print(f"Loading evaluation data for {symbol} from {start_date} to {end_date}...")
-    kline_df = load_kline_data_for_range(symbol, start_date, end_date, interval, env_config["kline_price_features"], cache_dir, binance_settings, 'none')
-    tick_df = load_tick_data_for_range(symbol, start_date, end_date, cache_dir, binance_settings, env_config.get("tick_resample_interval_ms"), 'none')
+    # 4. Load Evaluation Data
+    kline_df = load_kline_data_for_range(run_settings["default_symbol"], run_settings["start_date_eval"], run_settings["end_date_eval"], run_settings["historical_interval"], env_config["kline_price_features"], run_settings["historical_cache_dir"], binance_settings, 'none')
+    tick_df = load_tick_data_for_range(run_settings["default_symbol"], run_settings["start_date_eval"], run_settings["end_date_eval"], run_settings["historical_cache_dir"], binance_settings, env_config.get("tick_resample_interval_ms"), 'none')
 
     if kline_df.empty or tick_df.empty:
         print("ERROR: Could not load data for the evaluation range.")
         return
     print("Data loaded successfully.\n")
 
-    print("--- Creating Evaluation Environment ---")
+    # 5. Create Environment
     available_envs = load_environments()
     env_class = available_envs.get(env_type)
-    if not env_class:
-        raise ValueError(f"Environment type '{env_type}' not found.")
         
     def make_env():
         env = env_class(tick_df=tick_df, kline_df_with_ta=kline_df, config=env_config)
@@ -89,10 +80,17 @@ def main():
     env.training = False
     env.norm_reward = False
 
+    # 6. Load Model
     print(f"--- Loading Trained {agent_type} Agent ---")
-    model = PPO.load(model_path, env=env)
+    
+    # --- THIS IS THE FIX ---
+    # Get the device from config and pass it to the load function
+    device = run_settings.get("device", "auto")
+    model = PPO.load(model_path, env=env, device=device)
+    
     print("Agent loaded successfully.\n")
 
+    # 7. Run Single Episode and Log Details
     print("--- Running Single Evaluation Episode ---")
     obs = env.reset()
     done = False
@@ -112,8 +110,6 @@ def main():
             f"Action: {action_map.get(discrete_action, 'Unknown'):<5} | "
             f"Position: {'OPEN' if info['position_open'] else 'FLAT':<5} | "
             f"Equity: {info['equity']:<10.2f} | "
-            # --- THIS IS THE FIX ---
-            # Using the 'reward' variable directly, not looking inside 'info'
             f"Reward: {reward[0]:<8.4f}"
         )
         episode_reward += reward[0]
