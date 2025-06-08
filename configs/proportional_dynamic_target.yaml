@@ -1,0 +1,67 @@
+# config.yaml
+
+agent_type: "PPO"
+
+binance_settings:
+  testnet: false
+
+run_settings:
+  env_type: "proportional_dynamic_target_env" # Use the new environment
+  log_level: "detailed"
+  model_name: "dynamic_profit_target_agent" # New model name for this complex objective
+  continue_from_existing_model: false # Start fresh for a new learning goal
+  default_symbol: "BTCUSDT"
+  historical_interval: "1h"
+  start_date_train: "2025-01-01 00:00:00"
+  end_date_train: "2025-01-15 23:59:59"
+  start_date_eval: "2025-01-16 00:00:00"
+  end_date_eval: "2025-01-17 23:59:59"
+
+  eval_freq_episodes: 5
+  stop_training_patience_evals: 10
+
+environment:
+  # Base properties, which the new environment will pick up
+  profit_target_pct: 0.002 # Default for internal logic, agent will learn to pick this
+  reward_factor_above_target: 60.0 # This specific one is now unused by the new proportional logic
+  
+  # New proportional reward scaling factors you can tune
+  reward_trade_completion_bonus_value: 0.1
+  reward_scale_deviation_positive: 50.0
+  reward_scale_deviation_negative: 50.0
+  reward_scale_actual_pnl_loss: 100.0
+
+  # Observation space as discussed previously
+  kline_window_size: 5
+  kline_price_features:
+    - "Open"
+    - "High"
+    - "Low"
+    - "Close"
+    - "Volume"
+    - "SMA_10"
+    - "RSI_14"
+
+  tick_feature_window_size: 10
+  tick_features_to_use:
+    - "Price"
+    - "Quantity"
+    - "IsBuyerMaker"
+
+  tick_resample_interval_ms: 1000 # Use 1-second resampling for more granularity
+
+ppo_params:
+  total_timesteps: 1000000 # Increase substantially for this complex task
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.05 # Keep encouraging exploration
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.02
+  policy_kwargs:
+    net_arch: [64, 64] # Simpler network as discussed

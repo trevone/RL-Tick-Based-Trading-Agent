@@ -97,6 +97,33 @@ class SimpleTradingEnv(gym.Env):
         self.current_balance, self.position_open, self.entry_price, self.position_volume = self.initial_balance, False, 0.0, 0.0
         self.current_step = self.start_step
         return self._get_observation(), self._get_info()
+    
+    def _handle_episode_termination_and_cleanup(self, terminated: bool, reward: float, truncated: bool) -> tuple[bool, float, bool]:
+        """
+        Handles catastrophic loss, episode truncation, and forces position closure at episode end.
+        This function is intended to be called after current_step and current_equity have been updated.
+        """
+
+        price = self.decision_prices[self.current_step]
+        current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
+
+        self.current_step += 1
+
+        # Catastrophic loss: Still a hard termination and significant penalty
+        if current_equity < self.catastrophic_loss_limit:
+            terminated = True
+            reward += self.config["penalty_catastrophic_loss"]
+
+        # End of data: Episode truncated
+        if self.current_step > self.end_step:
+            truncated = True
+        
+        # Force close any open position at the end of the episode to clean up
+        if (terminated or truncated) and self.position_open:
+            self.current_balance += self.position_volume * price * (1 - self.commission_pct)
+            self.position_open = False
+        
+        return terminated, reward, truncated
 
     def step(self, action_tuple):
         discrete_action, _ = action_tuple
@@ -144,23 +171,7 @@ class SimpleTradingEnv(gym.Env):
             # regardless of position status initially, then learn the rules.
             reward += PENALTY_HOLD_ACTION
 
-        # --- Common logic for advancing step and checking for termination ---
-        self.current_step += 1
-        current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-
-        # Catastrophic loss: Still a hard termination and significant penalty
-        if current_equity < self.catastrophic_loss_limit:
-            terminated = True
-            reward += self.config["penalty_catastrophic_loss"]
-
-        # End of data: Episode truncated
-        if self.current_step > self.end_step:
-            truncated = True
         
-        # Force close any open position at the end of the episode to clean up
-        if (terminated or truncated) and self.position_open:
-            self.current_balance += self.position_volume * price * (1 - self.commission_pct)
-            self.position_open = False
 
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
