@@ -5,10 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Module",
+            "name": "Train Agent",
             "type": "debugpy",
             "request": "launch",
             "module": "src.agents.train_agent"
+        },
+        {
+            "name": "Evaluate Model",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.agents.simple_eval"
         }
     ]
 }

@@ -64,6 +64,12 @@ def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: list
             elif feature_name == 'BBANDS_Upper':
                 upper, middle, lower = talib.BBANDS(close_np, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
                 df_processed['BBANDS_Upper'] = upper
+            elif feature_name == 'BBANDS_Lower':
+                upper, middle, lower = talib.BBANDS(close_np, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
+                df_processed['BBANDS_Lower'] = lower
+            elif feature_name == 'BBANDS_Middle':
+                upper, middle, lower = talib.BBANDS(close_np, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
+                df_processed['BBANDS_Middle'] = middle
             elif feature_name == 'AD':
                 df_processed['AD'] = talib.AD(high_np, low_np, close_np, volume_np)
             elif feature_name == 'OBV':

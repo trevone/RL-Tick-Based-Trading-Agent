@@ -52,7 +52,7 @@ environment:
   penalty_sell_no_position: -0.1
   reward_hold_profitable_position: 0.0001
   penalty_hold_losing_position: -0.0005
-  penalty_hold_flat_position: -0.0001
+  penalty_hold_flat_position: -0.05
   penalty_catastrophic_loss: -100.0    # Large penalty for hitting catastrophic loss threshold
   reward_eof_sell_factor: 5.0          # Bonus for positive PnL if position is closed at end of episode
 
