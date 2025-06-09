@@ -142,6 +142,10 @@ class SimpleTradingEnv(gym.Env):
             self.current_balance += revenue
             self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
 
+        # --- ensure obs, info are called before step increment ---
+        obs = self._get_observation()
+        info = self._get_info()
+       
         # --- Common logic for advancing step and checking for termination ---
         self.current_step += 1
         current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
@@ -157,6 +161,6 @@ class SimpleTradingEnv(gym.Env):
             self.current_balance += self.position_volume * price * (1 - self.commission_pct)
             self.position_open = False
 
-        return self._get_observation(), reward, terminated, truncated, self._get_info()
+        return obs, reward, terminated, truncated, info
 
     def close(self): pass
