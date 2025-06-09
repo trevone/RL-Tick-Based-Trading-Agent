@@ -97,33 +97,6 @@ class SimpleTradingEnv(gym.Env):
         self.current_balance, self.position_open, self.entry_price, self.position_volume = self.initial_balance, False, 0.0, 0.0
         self.current_step = self.start_step
         return self._get_observation(), self._get_info()
-    
-    def _handle_episode_termination_and_cleanup(self, terminated: bool, reward: float, truncated: bool) -> tuple[bool, float, bool]:
-        """
-        Handles catastrophic loss, episode truncation, and forces position closure at episode end.
-        This function is intended to be called after current_step and current_equity have been updated.
-        """
-
-        price = self.decision_prices[self.current_step]
-        current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-
-        self.current_step += 1
-
-        # Catastrophic loss: Still a hard termination and significant penalty
-        if current_equity < self.catastrophic_loss_limit:
-            terminated = True
-            reward += self.config["penalty_catastrophic_loss"]
-
-        # End of data: Episode truncated
-        if self.current_step > self.end_step:
-            truncated = True
-        
-        # Force close any open position at the end of the episode to clean up
-        if (terminated or truncated) and self.position_open:
-            self.current_balance += self.position_volume * price * (1 - self.commission_pct)
-            self.position_open = False
-        
-        return terminated, reward, truncated
 
     def step(self, action_tuple):
         discrete_action, _ = action_tuple
@@ -145,6 +118,7 @@ class SimpleTradingEnv(gym.Env):
                     self.current_balance -= cost
                     self.position_open, self.entry_price = True, price
                     reward += REWARD_CORRECT_TRADE_ACTION
+                    self.entry_price_before_action = price
                 else:
                     # Penalize: Correct intent (BUY when flat) but insufficient funds
                     # This teaches the agent about balance constraints indirectly
@@ -161,6 +135,29 @@ class SimpleTradingEnv(gym.Env):
                 self.current_balance += revenue
                 self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
                 reward += REWARD_CORRECT_TRADE_ACTION
+
+
+                actual_pnl_ratio = (price / self.entry_price_before_action - 1) if self.entry_price_before_action > 1e-9 else 0.0
+
+                # Calculate proportional component based on your desired mapping:
+                # Maps actual_pnl_ratio=0 to -1 reward component
+                # Maps actual_pnl_ratio=profit_target_pct to +1 reward component
+                
+                target_pct = self.config['profit_target_pct']
+                
+                if target_pct <= 1e-9: # Handle cases where target_pct is zero or extremely small to avoid division by zero
+                    proportional_component = -1.0 # If target is 0, and PnL is 0, reward is -1. If PnL is negative, it's very negative.
+                else:
+                    proportional_component = (2 / target_pct) * actual_pnl_ratio - 1
+                
+                # --- CHANGE STARTS HERE ---
+                # Removed all clipping to allow proportional_component to go arbitrarily high or low.
+                # --- CHANGE ENDS HERE ---
+
+                # Final reward for successful sell: Base reward (+1) + Proportional component
+                reward += proportional_component
+
+
             else:
                 # Agent incorrectly attempts to SELL when FLAT
                 reward += PENALTY_INCORRECT_TRADE_ACTION
@@ -171,7 +168,23 @@ class SimpleTradingEnv(gym.Env):
             # regardless of position status initially, then learn the rules.
             reward += PENALTY_HOLD_ACTION
 
+        # --- Common logic for advancing step and checking for termination ---
+        self.current_step += 1
+        current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
+
+        # Catastrophic loss: Still a hard termination and significant penalty
+        if current_equity < self.catastrophic_loss_limit:
+            terminated = True
+            reward += self.config["penalty_catastrophic_loss"]
+
+        # End of data: Episode truncated
+        if self.current_step > self.end_step:
+            truncated = True
         
+        # Force close any open position at the end of the episode to clean up
+        if (terminated or truncated) and self.position_open:
+            self.current_balance += self.position_volume * price * (1 - self.commission_pct)
+            self.position_open = False
 
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
