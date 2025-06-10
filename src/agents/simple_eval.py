@@ -96,11 +96,22 @@ def main():
     done = False
     episode_reward = 0.0
 
+    episode_reward = 0.0
+
+    # Print a clear header for the log table
+    print(
+        f"{'Timestamp':<20} | {'Step':<5} | {'Price':<9} | {'Action':<5} | "
+        f"{'Status':<5} | {'Equity':<12} | {'Reward':<8}"
+    )
+    print("-" * 82)
+
     info_at_decision_time = env.envs[0].unwrapped._get_info()
 
     while not done:
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, info_list = env.step(action)
+
+        episode_reward += reward[0]
         
         # --- FIX #1: Correctly interpret the action ---
         # Round the raw float action from the model to get the correct integer ID.
@@ -110,11 +121,13 @@ def main():
         # --- FIX #2: Use data from the correct point in time for the log ---
         # The log line now shows the state of the environment at the moment the action was chosen
         position_status = "OPEN" if info_at_decision_time["position_open"] else "FLAT"
+        timestamp_str = info_at_decision_time['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+
 
         print(
-            f"{info_at_decision_time['current_step']:<5} | "
+            f"{timestamp_str:<20} | {info_at_decision_time['current_step']:<5} | "
             f"{info_at_decision_time['current_tick_price']:<9.2f} | {action_str:<5} | "
-            f"{position_status:<5} | {info_at_decision_time['equity']:<9.2f} | "
+            f"{position_status:<5} | {info_at_decision_time['equity']:<12.2f} | "
             f"{reward[0]:<8.4f}"
         )
 

@@ -1,0 +1,90 @@
+# configs/hpo_profit_driven.yaml
+# Configuration for Hyperparameter Optimization (HPO) using Optuna
+# to find the best settings for a PPO agent on the profit_driven_env.
+# python -m src.agents.hpo --config_name hpo_profit_driven
+
+# --- HPO General Settings ---
+hpo_settings:
+  # The sampling algorithm Optuna uses. TPESampler is a good default that intelligently
+  # narrows the search space based on previous results.
+  sampler: "TPESampler"
+  
+  # The pruning algorithm, which stops unpromising trials early to save time.
+  pruner: "MedianPruner"
+  
+  # Total number of different hyperparameter combinations to test.
+  # Start with a smaller number (e.g., 50) and increase if you have time.
+  n_trials: 100
+  
+  # Number of parallel jobs. -1 uses all available CPU cores, which is recommended.
+  n_jobs: -1
+  
+  # Name for the Optuna study. Results are saved in a SQLite database at
+  # 'hpo_studies/{study_name}.db' for later analysis.
+  study_name: "ppo_profit_driven_study_v1"
+
+# --- Settings for the agent and environment being optimized ---
+# These are the base settings that will be used for every trial.
+agent_type: "PPO"
+
+run_settings:
+  env_type: "profit_driven_env" # The environment we want to optimize for.
+  log_level: "minimal"
+  default_symbol: "BTCUSDT"
+  historical_interval: "1h"
+  # It's often wise to use a shorter, representative date range for HPO to make each trial faster.
+  start_date_train: "2025-01-01 00:00:00"
+  end_date_train: "2025-02-01 23:59:59"
+  start_date_eval: "2025-02-02 00:00:00"
+  end_date_eval: "2025-02-09 23:59:59"
+
+environment:
+  kline_window_size: 20
+  kline_price_features:
+    - "Open"
+    - "High"
+    - "Low"
+    - "Close"
+    - "Volume" 
+    - "SMA_7"
+    - "SMA_14"
+  tick_feature_window_size: 50
+
+# --- Hyperparameter Search Space for PPO ---
+# This section tells Optuna which parameters to tune and what ranges to try.
+# Each parameter has a 'type' and then range specifiers like 'low'/'high' or 'choices'.
+ppo_params:
+  n_steps:
+    type: "categorical"
+    choices: [2048, 4096, 8192]
+
+  gamma: # Discount factor for future rewards
+    type: "float"
+    low: 0.99
+    high: 0.999
+
+  learning_rate:
+    type: "float"
+    low: 0.00001  # 1e-5
+    high: 0.001   # 1e-3
+    log: true     # A logarithmic scale is best for searching learning rates
+
+  ent_coef: # Entropy coefficient to encourage exploration
+    type: "float"
+    low: 0.0
+    high: 0.05
+
+  clip_range: # PPO clipping parameter
+    type: "float"
+    low: 0.1
+    high: 0.3
+
+  vf_coef: # Value function coefficient in the loss calculation
+    type: "float"
+    low: 0.4
+    high: 0.6
+    
+  # For this example, we will keep the network architecture fixed.
+  # Tuning architecture within the same study can be complex.
+  policy_kwargs:
+    net_arch: [128, 64]

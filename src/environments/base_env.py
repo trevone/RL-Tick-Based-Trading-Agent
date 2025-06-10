@@ -97,7 +97,8 @@ class SimpleTradingEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_balance, self.position_open, self.entry_price, self.position_volume = self.initial_balance, False, 0.0, 0.0
-        self.trade_start_step = 0 # << UPDATED
+        self.trade_start_step = 0
+        self.last_price = 0.0  # <<< FIX 1/2: Initialize last_price
         self.current_step = self.start_step
         return self._get_observation(), self._get_info()
     
@@ -128,26 +129,22 @@ class SimpleTradingEnv(gym.Env):
         price = self.decision_prices[self.current_step]
         terminated, truncated = False, False
 
-        # --- Calculate reward BEFORE executing the trade ---
-        # This uses the state (e.g., self.position_open) from *before* the action is taken.
         reward = self._calculate_reward(discrete_action, price)
 
-        # --- Execute Trade and Update State ---
         if discrete_action == 1 and not self.position_open: # BUY
             cost = (self.initial_balance * self.base_trade_amount_ratio) * (1 + self.commission_pct)
             if self.current_balance >= cost:
                 self.position_volume = (self.initial_balance * self.base_trade_amount_ratio) / price
                 self.current_balance -= cost
                 self.position_open, self.entry_price = True, price
-                self.trade_start_step = self.current_step # << UPDATED
+                self.trade_start_step = self.current_step
         
         elif discrete_action == 2 and self.position_open: # SELL
             revenue = self.position_volume * price * (1 - self.commission_pct)
             self.current_balance += revenue
             self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
-            self.trade_start_step = 0 # << UPDATED
+            self.trade_start_step = 0
        
-        # --- Common logic for advancing step and checking for termination ---
         self.current_step += 1
         current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
 
@@ -161,6 +158,8 @@ class SimpleTradingEnv(gym.Env):
         if (terminated or truncated) and self.position_open:
             self.current_balance += self.position_volume * price * (1 - self.commission_pct)
             self.position_open = False
+
+        self.last_price = price  # <<< FIX 2/2: Update last_price for the next step
 
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
