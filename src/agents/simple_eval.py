@@ -96,26 +96,33 @@ def main():
     done = False
     episode_reward = 0.0
 
+    info_at_decision_time = env.envs[0].unwrapped._get_info()
+
     while not done:
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, done, info = env.step(action)
+        # Agent decides on an action based on the observation of the current state
+        action, _states = model.predict(obs, deterministic=True)
         
-        info = info[0]
-        action_map = {0: "Hold", 1: "Buy", 2: "Sell"}
-        discrete_action = int(np.round(action[0][0]))
-        
+        # Take the action, which moves the environment to the NEXT state
+        obs, reward, done, info_list = env.step(action)
+
+        # FIX: Convert the float action to an int before dictionary lookup
+        discrete_action = int(action[0][0])
+        action_str = env.envs[0].unwrapped.ACTION_MAP.get(discrete_action, "Error")
+        position_status = "OPEN" if info_at_decision_time["position_open"] else "FLAT"
+
+        # Format the timestamp for clean printing
+        timestamp_str = info_at_decision_time['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+
         print(
-            f"Step: {info['current_step']:<5} | "
-            f"Price: {info['current_tick_price']:<9.2f} | "
-            f"Action: {action_map.get(discrete_action, 'Unknown'):<5} | "
-            f"Position: {'OPEN' if info['position_open'] else 'FLAT':<5} | "
-            f"Equity: {info['equity']:<10.2f} | "
-            f"Reward: {reward[0]:<8.4f}"
+            f"{timestamp_str:<20} | {info_at_decision_time['current_step']:<5} | "
+            f"{info_at_decision_time['current_tick_price']:<9.2f} | {action_str:<5} | "
+            f"{position_status:<5} | {info_at_decision_time['equity']:<9.2f} | "
+            f"{reward[0]:<8.4f}"
         )
-        episode_reward += reward[0]
+        info_at_decision_time = info_list[0]
 
     print("\n--- Episode Finished ---")
-    print(f"Final Equity: {info['equity']:.2f}")
+    print(f"Final Equity: {info_at_decision_time['equity']:.2f}")
     print(f"Total Reward for Episode: {episode_reward:.4f}")
     
     env.close()
