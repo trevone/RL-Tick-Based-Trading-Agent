@@ -41,6 +41,7 @@ class SimpleTradingEnv(gym.Env):
         self.commission_pct = float(self.config["commission_pct"])
         self.base_trade_amount_ratio = float(self.config["base_trade_amount_ratio"])
         self.catastrophic_loss_limit = self.initial_balance * (1.0 - float(self.config["catastrophic_loss_threshold_pct"]))
+        self.last_executed_action = 0 # Add this line
         
         self.action_space = spaces.Tuple((spaces.Discrete(3), spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)))
         
@@ -91,13 +92,21 @@ class SimpleTradingEnv(gym.Env):
         safe_step = min(self.current_step, self.end_step)
         price = self.decision_prices[safe_step]
         equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-        timestamp = self.tick_df.index[safe_step] # Get the timestamp for the current step
-        return {"current_step": self.current_step, "timestamp": timestamp, "equity": equity, "position_open": self.position_open, "current_tick_price": price}
+        timestamp = self.tick_df.index[safe_step]
+        return {
+            "current_step": self.current_step,
+            "equity": equity,
+            "position_open": self.position_open,
+            "current_tick_price": price,
+            "timestamp": timestamp,
+            "executed_action": self.last_executed_action # Add this line
+        }
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_balance, self.position_open, self.entry_price, self.position_volume = self.initial_balance, False, 0.0, 0.0
         self.current_step = self.start_step
+        self.last_executed_action = 0 # Add this line
         return self._get_observation(), self._get_info()
     
     def _calculate_reward(self, discrete_action, price_for_action):
@@ -124,6 +133,7 @@ class SimpleTradingEnv(gym.Env):
         Executes one time step within the environment.
         """
         discrete_action, _ = action_tuple
+        self.last_executed_action = discrete_action # Add this line right at the top
         price = self.decision_prices[self.current_step]
         terminated, truncated = False, False
 

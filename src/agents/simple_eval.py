@@ -99,31 +99,36 @@ def main():
     info_at_decision_time = env.envs[0].unwrapped._get_info()
 
     while not done:
-        # Agent decides on an action based on the observation of the current state
-        action, _states = model.predict(obs, deterministic=True)
-        
-        # Take the action, which moves the environment to the NEXT state
+        action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, info_list = env.step(action)
+        
+        # --- FIX #1: Correctly interpret the action ---
+        # Round the raw float action from the model to get the correct integer ID.
+        discrete_action_id = int(round(action[0][0]))
+        action_str = env.envs[0].unwrapped.ACTION_MAP.get(discrete_action_id, "Error")
 
-        # FIX: Convert the float action to an int before dictionary lookup
-        discrete_action = int(action[0][0])
-        action_str = env.envs[0].unwrapped.ACTION_MAP.get(discrete_action, "Error")
+        # --- FIX #2: Use data from the correct point in time for the log ---
+        # The log line now shows the state of the environment at the moment the action was chosen
         position_status = "OPEN" if info_at_decision_time["position_open"] else "FLAT"
 
-        # Format the timestamp for clean printing
-        timestamp_str = info_at_decision_time['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
-
         print(
-            f"{timestamp_str:<20} | {info_at_decision_time['current_step']:<5} | "
+            f"{info_at_decision_time['current_step']:<5} | "
             f"{info_at_decision_time['current_tick_price']:<9.2f} | {action_str:<5} | "
             f"{position_status:<5} | {info_at_decision_time['equity']:<9.2f} | "
             f"{reward[0]:<8.4f}"
         )
+
+        # Update the info for the next loop iteration
         info_at_decision_time = info_list[0]
+        episode_reward += reward[0]
 
     print("\n--- Episode Finished ---")
-    print(f"Final Equity: {info_at_decision_time['equity']:.2f}")
-    print(f"Total Reward for Episode: {episode_reward:.4f}")
+    final_equity = info_at_decision_time.get('equity', 0)
+    initial_balance = env.envs[0].unwrapped.initial_balance
+    profit = final_equity - initial_balance
+    profit_pct = (profit / initial_balance) * 100
+    print(f"Final Equity: {final_equity:.2f}")
+    print(f"Profit: {profit:.2f} ({profit_pct:.2f}%)")
     
     env.close()
 
