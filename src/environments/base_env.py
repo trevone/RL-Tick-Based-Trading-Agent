@@ -88,9 +88,11 @@ class SimpleTradingEnv(gym.Env):
         return np.concatenate([tick_features, kline_features, portfolio_state])
 
     def _get_info(self) -> dict:
-        price = self.decision_prices[min(self.current_step, self.end_step)]
+        safe_step = min(self.current_step, self.end_step)
+        price = self.decision_prices[safe_step]
         equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
-        return {"current_step": self.current_step, "equity": equity, "position_open": self.position_open, "current_tick_price": price}
+        timestamp = self.tick_df.index[safe_step] # Get the timestamp for the current step
+        return {"current_step": self.current_step, "timestamp": timestamp, "equity": equity, "position_open": self.position_open, "current_tick_price": price}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -141,10 +143,6 @@ class SimpleTradingEnv(gym.Env):
             revenue = self.position_volume * price * (1 - self.commission_pct)
             self.current_balance += revenue
             self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
-
-        # --- ensure obs, info are called before step increment ---
-        obs = self._get_observation()
-        info = self._get_info()
        
         # --- Common logic for advancing step and checking for termination ---
         self.current_step += 1
@@ -161,6 +159,6 @@ class SimpleTradingEnv(gym.Env):
             self.current_balance += self.position_volume * price * (1 - self.commission_pct)
             self.position_open = False
 
-        return obs, reward, terminated, truncated, info
+        return self._get_observation(), reward, terminated, truncated, self._get_info()
 
     def close(self): pass
