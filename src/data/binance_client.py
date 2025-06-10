@@ -24,7 +24,7 @@ def fetch_and_cache_kline_data(
     api_request_delay_seconds: float = 0.2, pbar_instance = None
 ) -> pd.DataFrame:
 
-    _print_fn = pbar_instance.write if pbar_instance else print
+    _print_fn = print # Changed: Always use print for logging
 
     if not BINANCE_CLIENT_AVAILABLE:
         _print_fn("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
@@ -116,7 +116,7 @@ def fetch_continuous_aggregate_trades(
     api_request_delay_seconds: float = 0.2, pbar_instance = None
 ) -> pd.DataFrame:
 
-    _print_fn = pbar_instance.write if pbar_instance else print
+    _print_fn = print # Changed: Always use print for logging
 
     if not BINANCE_CLIENT_AVAILABLE:
         _print_fn("CRITICAL ERROR in fetch_continuous_aggregate_trades: python-binance library not found."); sys.stdout.flush()
@@ -158,10 +158,13 @@ def fetch_continuous_aggregate_trades(
     current_start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
 
+    # Changed: Simplified tqdm initialization for a single bar
     local_fetch_pbar = tqdm(total=max(1, end_ms - current_start_ms),
                             desc=f"Fetching {symbol} for {daily_file_date_str}",
                             unit="ms", unit_scale=True, leave=False,
-                            disable=(log_level == "none"))
+                            disable=(log_level == "none"),
+                            mininterval=0.5 # Kept mininterval for smoother updates
+                           )
 
     while current_start_ms < end_ms:
         chunk_end_ms = min(current_start_ms + (60 * 60 * 1000 - 1), end_ms)

@@ -51,11 +51,12 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     all_data_frames = []
     current_date_obj = start_date_obj
 
-    pbar_days = tqdm(total=(end_date_obj - start_date_obj).days + 1, desc=f"Processing Ticks {symbol}", leave=True, disable=(log_level=="none"))
+    # Changed: Removed outer tqdm progress bar, using print statements instead
+    print(f"Starting data loading for {symbol} from {start_date_str} to {end_date_str}.")
 
     while current_date_obj <= end_date_obj:
         date_str_for_day = current_date_obj.strftime('%Y-%m-%d')
-        _print_fn = pbar_days.write
+        _print_fn = print # Changed: Redirecting all prints to normal print
 
         if log_level == "detailed": _print_fn(f"\nDEBUG_LOAD_TICK (Daily): --- Processing day: {date_str_for_day} ---"); sys.stdout.flush()
 
@@ -95,14 +96,14 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                     end_date_str=day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
                     cache_dir=cache_dir, api_key=binance_settings.get("api_key"),
                     api_secret=binance_settings.get("api_secret"), testnet=binance_settings.get("testnet", False),
-                    log_level="detailed" if log_level=="detailed" else "none",
+                    log_level="detailed" if log_level=="detailed" else "normal", # Ensure inner progress bar is enabled
                     api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2),
-                    pbar_instance=pbar_days
+                    pbar_instance=None # Changed: Do not pass an outer pbar instance
                 )
             
             if df_raw_daily.empty:
                 current_date_obj += timedelta(days=1)
-                pbar_days.update(1)
+                # No pbar_days.update(1) here as outer bar is removed
                 continue
 
             if tick_resample_interval_ms:
@@ -128,8 +129,8 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         if not df_daily.empty:
             all_data_frames.append(df_daily)
         current_date_obj += timedelta(days=1)
-        pbar_days.update(1)
-    pbar_days.close()
+        _print_fn(f"Finished processing data for {date_str_for_day}. Moving to next day.") # Added print for daily progress
+    print(f"Finished data loading for {symbol} from {start_date_str} to {end_date_str}.") # Final print
 
     if not all_data_frames:
         if log_level != "none": print(f"No tick data found or loaded for {symbol} in range {start_date_str} to {end_date_str}.")

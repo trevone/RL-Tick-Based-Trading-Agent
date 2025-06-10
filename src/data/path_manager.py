@@ -11,11 +11,25 @@ RANGE_CACHE_SUBDIR = "range_cache"
 def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades",
                           interval: str = None, price_features_to_add: list = None,
                           cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None) -> str:
-    symbol_cache_dir = os.path.join(cache_dir, symbol)
+    
+    # Base directory includes symbol and data_type
+    base_dir = os.path.join(cache_dir, symbol, data_type)
+
+    filename_prefix = ""
+    safe_filename = ""
 
     if data_type == "agg_trades":
-        filename_prefix = "bn_aggtrades"
+        filename_prefix = "bn_agg_trades" # Changed: Prefix updated from 'bn_aggtrades' to 'bn_agg_trades'
         resample_suffix = f"_R{resample_interval_ms}ms" if resample_interval_ms else ""
+        
+        # Changed: If resampled, add resample interval as a subdirectory
+        if resample_suffix:
+            # Remove leading underscore from suffix for directory name
+            subdirectory = resample_suffix[1:] 
+            full_data_path = os.path.join(base_dir, subdirectory)
+        else:
+            full_data_path = base_dir
+
         safe_filename = f"{filename_prefix}_{symbol}_{date_str}{resample_suffix}.parquet"
     elif data_type == "kline":
         if not interval: raise ValueError("Interval must be provided for kline data type.")
@@ -26,9 +40,11 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
             if sorted_features_str: sorted_features_str = f"_{sorted_features_str}"
         filename_prefix = "bn_klines"
         safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}{sorted_features_str}.parquet"
+        full_data_path = base_dir # kline data remains in data_type folder
     else:
         raise ValueError(f"Unsupported data_type: {data_type}. Must be 'agg_trades' or 'kline'.")
-    return os.path.join(symbol_cache_dir, safe_filename)
+        
+    return os.path.join(full_data_path, safe_filename)
 
 def _generate_data_config_hash_key(params: dict, length: int = 10) -> str:
     if 'price_features' in params and isinstance(params['price_features'], list):
