@@ -1,5 +1,4 @@
 .env
-config.yaml
 logs/
 data/
 binance_data_cache/

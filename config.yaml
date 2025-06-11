@@ -1,0 +1,60 @@
+# config.yaml
+
+agent_type: "PPO"
+
+binance_settings: 
+  testnet: false 
+
+run_settings:
+  env_type: "profit_driven_env"
+  log_level: "normal"
+  model_name: "profit_driven_env"
+  # Set to false if you want to start a completely new model training session
+  continue_from_existing_model: true
+  default_symbol: "BTCUSDT"
+  historical_interval: "1h"
+  start_date_train: "2025-01-01 00:00:00"
+  end_date_train: "2025-03-01 23:59:59"
+  start_date_eval: "2025-03-06 00:00:00"
+  end_date_eval: "2025-03-17 23:59:59"
+  eval_freq_episodes: 1
+  stop_training_patience_evals: 5
+
+environment:
+  # --- Parameters for the HybridRewardEnv ---
+  reward_at_entry: 1.0  # The maximum reward for holding at the entry price
+  decay_rate: 0.1       # Controls how quickly the hold reward decreases
+  
+  # --- General Environment Parameters ---
+  kline_window_size: 20
+  kline_price_features:
+    - "Open"
+    - "High"
+    - "Low"
+    - "Close"
+    - "Volume" 
+    - "SMA_7"
+    - "SMA_14"
+
+  tick_feature_window_size: 10
+  tick_features_to_use:
+    - "Price"
+    - "Quantity"
+
+  tick_resample_interval_ms: 60000   
+
+ppo_params:
+  total_timesteps: 1000000
+  learning_rate: 0.0003
+  n_steps: 4096
+  batch_size: 128
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.03
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.02
+  policy_kwargs:
+    net_arch: [128, 64]
