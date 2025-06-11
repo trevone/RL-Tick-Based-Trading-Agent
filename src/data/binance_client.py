@@ -18,6 +18,7 @@ except ImportError:
 def fetch_and_cache_kline_data(
     symbol: str, interval: str, start_date_str: str, end_date_str: str,
     cache_dir: str,
+    kline_config_hash: str = None,
     price_features_to_add: list = None,
     api_key: str = None, api_secret: str = None, testnet: bool = False,
     cache_file_type: str = "parquet", log_level: str = "normal",
@@ -29,11 +30,6 @@ def fetch_and_cache_kline_data(
     if not BINANCE_CLIENT_AVAILABLE:
         _print_fn("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
         return pd.DataFrame()
-
-    # Generate config hash from price features
-    ta_features_for_hash = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
-    config_for_hash = {"features": ta_features_for_hash}
-    kline_hash = generate_data_config_hash_key(config_for_hash) if ta_features_for_hash else None
 
     daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
     cache_file = get_data_path_for_day(

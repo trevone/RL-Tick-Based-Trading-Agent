@@ -221,10 +221,10 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
             "start_date_str": day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
             "end_date_str": day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
             "cache_dir": historical_cache_dir,
-            "price_features_to_add": price_features_to_add,
             "api_key": binance_settings.get("api_key"),
             "api_secret": binance_settings.get("api_secret"),
             "testnet": binance_settings.get("testnet", False),
+            "kline_config_hash": kline_hash
         }
         path_kwargs = {
             "interval": interval,
@@ -243,3 +243,46 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
         )
         current_date += timedelta(days=1)
     print("\nK-line data management process completed.")
+
+def main():
+    """Main function to parse arguments and trigger data management."""
+    parser = argparse.ArgumentParser(description="Data Management Script for Binance Data.")
+    parser.add_argument("--start_date", required=True, help="Start date in YYYY-MM-DD format.")
+    parser.add_argument("--end_date", required=True, help="End date in YYYY-MM-DD format.")
+    parser.add_argument("--symbol", required=True, help="Trading symbol (e.g., BTCUSDT).")
+    parser.add_argument("--data_type", required=True, choices=['kline', 'agg_trades'], help="Type of data to download.")
+    # Add optional arguments for k-line data if needed, matching download_and_manage_kline_data
+    parser.add_argument("--interval", default="1m", help="Kline interval (e.g., 1m, 5m, 1h).")
+    parser.add_argument("--price_features", nargs='*', default=['Open', 'High', 'Low', 'Close', 'Volume'], help="Price features to include.")
+
+    args = parser.parse_args()
+
+    if args.data_type == 'kline':
+        print(f"--- Starting K-LINE Data Management for {args.symbol} ---")
+        download_and_manage_kline_data(
+            start_date_str_arg=args.start_date,
+            end_date_str_arg=args.end_date,
+            symbol=args.symbol,
+            interval=args.interval,
+            price_features_to_add=args.price_features
+        )
+    # ---- VVVV ----  THIS IS THE CORRECTED BLOCK ---- VVVV ----
+    elif args.data_type == 'agg_trades':
+        print(f"--- Starting AGGREGATE TRADES Data Management for {args.symbol} ---")
+        download_and_manage_data(
+            start_date_str_arg=args.start_date,
+            end_date_str_arg=args.end_date,
+            symbol=args.symbol
+        )
+    # ---- ^^^^ ----  THIS IS THE CORRECTED BLOCK ---- ^^^^ ----
+    else:
+        print(f"Data type '{args.data_type}' is not supported by this script.")
+
+    print("\nData management process finished.")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        traceback.print_exc()
