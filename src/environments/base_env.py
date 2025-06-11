@@ -16,6 +16,7 @@ DEFAULT_ENV_CONFIG = {
     "initial_balance": 10000.0, "commission_pct": 0.001,
     "base_trade_amount_ratio": 0.02, "catastrophic_loss_threshold_pct": 0.3,
     "penalty_catastrophic_loss": -100.0,
+    "live_ta_recalc_every_n_steps": 1, # Default to update every step
     # --- Default reward/penalty values for the base environment ---
     "reward_correct_buy": 0.5,
     "reward_correct_sell_profit": 1.0,
@@ -33,10 +34,9 @@ def _get_max_ta_period(feature_names: list) -> int:
         for part in parts:
             if part.isdigit():
                 max_period = max(max_period, int(part))
-    # Provide a reasonable minimum for TAs without explicit periods (e.g., MACD, ADX)
     if any(f in ['MACD', 'ADX', 'STOCH_K', 'ATR'] for f in feature_names):
-        max_period = max(max_period, 26) # 26 is from MACD's slow period
-    return max(1, max_period) # Return at least 1
+        max_period = max(max_period, 26)
+    return max(1, max_period)
 
 class SimpleTradingEnv(gym.Env):
     metadata = {'render_modes': ['human']}
@@ -48,8 +48,6 @@ class SimpleTradingEnv(gym.Env):
 
         if tick_df.empty: raise ValueError("tick_df must be non-empty.")
         self.tick_df = tick_df.copy()
-        
-        # We now need both the raw kline data and the one with pre-calculated TAs
         self.raw_kline_df = kline_df_with_ta[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
         self.kline_df_with_ta = kline_df_with_ta.copy()
         
@@ -62,6 +60,10 @@ class SimpleTradingEnv(gym.Env):
         self.base_trade_amount_ratio = float(self.config["base_trade_amount_ratio"])
         self.catastrophic_loss_limit = self.initial_balance * (1.0 - float(self.config["catastrophic_loss_threshold_pct"]))
         
+        # --- PERFORMANCE OPTIMIZATION ---
+        self.live_ta_recalc_interval = int(self.config.get("live_ta_recalc_every_n_steps", 1))
+        self.last_live_ta_values = {}  # Cache for the last calculated live TA values
+
         self.action_space = spaces.Tuple((spaces.Discrete(3), spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)))
         
         self.tick_feature_window_size = int(self.config["tick_feature_window_size"])
@@ -79,9 +81,7 @@ class SimpleTradingEnv(gym.Env):
         self.tick_price_data = {name: self.tick_df[name].values.astype(np.float32) for name in self.config["tick_features_to_use"]}
         self.decision_prices = self.tick_price_data['Price']
         
-        # Get the max lookback period needed for the live TA calculation
         self.max_ta_period = _get_max_ta_period(self.config["kline_price_features"])
-
         self.kline_feature_arrays = {name: self.kline_df_with_ta[name].values.astype(np.float32) for name in self.config["kline_price_features"] if name in self.kline_df_with_ta}
         
         self.end_step = len(self.tick_df) - 1
@@ -122,22 +122,28 @@ class SimpleTradingEnv(gym.Env):
                 kline_idx = kline_indexer[0]
                 kline_start_idx = kline_idx - self.kline_window_size + 1
                 
-                window_features = {name: arr[kline_start_idx:kline_idx + 1] for name, arr in self.kline_feature_arrays.items()}
+                window_features = {name: arr[kline_start_idx:kline_idx + 1].copy() for name, arr in self.kline_feature_arrays.items()}
                 
+                # --- ALWAYS UPDATE LIVE CLOSE PRICE ---
+                if 'Close' in window_features:
+                    window_features['Close'][-1] = current_tick_price
+                
+                # --- PERIODICALLY UPDATE LIVE TA INDICATORS ---
                 if TALIB_AVAILABLE and self.max_ta_period > 1:
-                    recalc_start_idx = max(0, kline_idx - self.max_ta_period + 1)
-                    live_recalc_window_df = self.raw_kline_df.iloc[recalc_start_idx:kline_idx + 1].copy()
-                    live_recalc_window_df.iloc[-1, live_recalc_window_df.columns.get_loc('Close')] = current_tick_price
+                    if self.current_step % self.live_ta_recalc_interval == 0:
+                        recalc_start_idx = max(0, kline_idx - self.max_ta_period + 1)
+                        live_recalc_window_df = self.raw_kline_df.iloc[recalc_start_idx:kline_idx + 1].copy()
+                        live_recalc_window_df.iloc[-1, live_recalc_window_df.columns.get_loc('Close')] = current_tick_price
 
-                    live_ta_values_df = calculate_technical_indicators(
-                        live_recalc_window_df, self.config["kline_price_features"]
-                    )
-                    
-                    latest_live_ta_series = live_ta_values_df.iloc[-1]
-                    
-                    for name in self.config["kline_price_features"]:
-                        if name in latest_live_ta_series and name in window_features:
-                            window_features[name][-1] = latest_live_ta_series[name]
+                        live_ta_values_df = calculate_technical_indicators(
+                            live_recalc_window_df, self.config["kline_price_features"]
+                        )
+                        self.last_live_ta_values = live_ta_values_df.iloc[-1].to_dict()
+
+                    # Always inject the most recently calculated live TA values
+                    for name, value in self.last_live_ta_values.items():
+                        if name in window_features:
+                            window_features[name][-1] = value
 
                 kline_features_list = []
                 for name in self.config["kline_price_features"]:
@@ -164,6 +170,7 @@ class SimpleTradingEnv(gym.Env):
         self.trade_start_step = 0
         self.last_price = 0.0
         self.current_step = self.start_step
+        self.last_live_ta_values = {} # Reset the TA cache
         return self._get_observation(), self._get_info()
     
     def _calculate_reward(self, discrete_action, price_for_action):

@@ -1,5 +1,6 @@
 # configs/defaults/environment.yaml
 environment:
+  live_ta_recalc_every_n_steps: 5
   # K-line data configuration (e.g., for 1H candles)
   kline_window_size: 20                # Number of historical k-lines (e.g., 1H candles) to include in obs
   kline_price_features:                # Base features from k-lines and calculated TAs
