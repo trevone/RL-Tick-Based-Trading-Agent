@@ -16,11 +16,9 @@ LOG_DIR_BASE_NAME = "logs"
 DATA_MANAGEMENT_LOG_FILENAME = "data_management.log"
 
 def _get_project_root():
-    """Gets the project root directory based on this script's location."""
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _ensure_log_file_path():
-    """Ensures the log directory exists and returns the full log file path."""
     project_root = _get_project_root()
     log_dir_full_path = os.path.join(project_root, LOG_DIR_BASE_NAME)
     os.makedirs(log_dir_full_path, exist_ok=True)
@@ -70,15 +68,13 @@ def _log_deletion_event(file_path: str, reason: str):
         print(f"  ERROR: Failed to write to deletion log ({log_file_full_path}): {e}")
 
 def load_configs_for_data_management(config_dir="configs/defaults") -> dict:
-    """Loads configurations for data management tasks."""
     default_config_paths = [
         os.path.join(config_dir, "run_settings.yaml"),
         os.path.join(config_dir, "binance_settings.yaml")
     ]
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
-# CORRECTED: Added price_features_to_add parameter
-def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cache_dir, path_manager_kwargs, fetch_function, fetch_function_kwargs, price_features_to_add=None):
+def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cache_dir, path_manager_kwargs, fetch_function, fetch_function_kwargs, price_features_to_add=None, validation_kwargs=None):
     """
     Generic helper function to manage downloading and validating data for a single day.
     """
@@ -116,7 +112,6 @@ def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cac
         print(f"  Attempting to download and cache data...")
         sys.stdout.flush()
         try:
-            # FIX: Pass 'normal' log_level to activate the progress bar in the client
             fetch_function_kwargs['log_level'] = 'normal'
             data_fetched = fetch_function(**fetch_function_kwargs)
             if data_fetched is not None and not data_fetched.empty:
@@ -134,12 +129,14 @@ def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cac
             print(f"  Validating data at {file_path}...")
             sys.stdout.flush()
             try:
-                # CORRECTED: Pass price_features_to_add to the validator
-                is_valid, message = validate_daily_data(
-                    file_path, 
-                    log_level='none', 
-                    price_features_to_add=price_features_to_add
-                )
+                validator_params = {
+                    "log_level": 'none',
+                    "price_features_to_add": price_features_to_add
+                }
+                if validation_kwargs:
+                    validator_params.update(validation_kwargs)
+
+                is_valid, message = validate_daily_data(file_path, **validator_params)
                 if is_valid:
                     print(f"  Validation successful: {message.splitlines()[0]}")
                 else:
@@ -161,8 +158,10 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
     effective_config = load_configs_for_data_management()
     run_settings = effective_config.get("run_settings", {})
     binance_settings = effective_config.get("binance_settings", {})
+    validation_settings = effective_config.get("validation_settings", {})
     historical_cache_dir = run_settings.get("historical_cache_dir", "data_cache/")
-    
+    max_gap_ms = validation_settings.get("max_agg_trade_gap_ms", 3600000)
+
     print(f"--- Managing AGGREGATE TRADES ---")
     print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
     
@@ -183,6 +182,7 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
             "api_secret": binance_settings.get("api_secret"),
             "testnet": binance_settings.get("testnet", False),
         }
+        validation_kwargs = {"max_allowed_gap_ms": max_gap_ms}
 
         _manage_single_day_data(
             date_str_for_file=date_str,
@@ -191,7 +191,8 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
             historical_cache_dir=historical_cache_dir,
             path_manager_kwargs={},
             fetch_function=fetch_and_cache_tick_data,
-            fetch_function_kwargs=fetch_kwargs
+            fetch_function_kwargs=fetch_kwargs,
+            validation_kwargs=validation_kwargs
         )
         current_date += timedelta(days=1)
     print("\nAggregate trades data management process completed.")
@@ -208,7 +209,6 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
     print(f"--- Managing K-LINE DATA ({interval}) ---")
     print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
 
-    # Generate kline_hash
     ta_features_for_hash = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
     config_for_hash = {"features": ta_features_for_hash}
     kline_hash = generate_data_config_hash_key(config_for_hash) if ta_features_for_hash else None
@@ -231,15 +231,14 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
             "api_secret": binance_settings.get("api_secret"),
             "testnet": binance_settings.get("testnet", False),
             "kline_config_hash": kline_hash,
-            "price_features_to_add": price_features_to_add # CORRECTED: Pass features to fetcher
+            "price_features_to_add": price_features_to_add
         }
         path_kwargs = {
             "interval": interval,
             "price_features_to_add": price_features_to_add,
-            "kline_config_hash": kline_hash # Pass hash to path manager
+            "kline_config_hash": kline_hash
         }
 
-        # CORRECTED: Pass price_features_to_add to the management function
         _manage_single_day_data(
             date_str_for_file=date_str,
             symbol=symbol,
@@ -254,16 +253,13 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
     print("\nK-line data management process completed.")
 
 def main():
-    """Main function to parse arguments and trigger data management."""
     parser = argparse.ArgumentParser(description="Data Management Script for Binance Data.")
     parser.add_argument("--start_date", required=True, help="Start date in YYYY-MM-DD format.")
     parser.add_argument("--end_date", required=True, help="End date in YYYY-MM-DD format.")
     parser.add_argument("--symbol", required=True, help="Trading symbol (e.g., BTCUSDT).")
     parser.add_argument("--data_type", required=True, choices=['kline', 'agg_trades'], help="Type of data to download.")
-    # Add optional arguments for k-line data if needed, matching download_and_manage_kline_data
     parser.add_argument("--interval", default="1m", help="Kline interval (e.g., 1m, 5m, 1h).")
     parser.add_argument("--price_features", nargs='*', default=['Open', 'High', 'Low', 'Close', 'Volume'], help="Price features to include.")
-
     args = parser.parse_args()
 
     if args.data_type == 'kline':

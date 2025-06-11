@@ -122,7 +122,7 @@ def parse_filename_for_metadata(filename):
     
     return None
 
-def validate_daily_data(filepath: str, log_level: str = "normal", price_features_to_add: list = None) -> tuple[bool, str]:
+def validate_daily_data(filepath: str, log_level: str = "normal", price_features_to_add: list = None, max_allowed_gap_ms: int = 3600000) -> tuple[bool, str]:
     """
     Performs various checks on a single daily Parquet cache file for aggregate trades OR klines.
     For klines, `price_features_to_add` should be provided to ensure all expected columns are present.
@@ -280,9 +280,10 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
             if df.shape[0] > 1:
                 time_diffs = df.index.to_series().diff().dropna()
                 max_gap = time_diffs.max()
-                if max_gap > timedelta(hours=1):
+                # CORRECTED: Use the millisecond gap parameter
+                allowed_gap_timedelta = timedelta(milliseconds=max_allowed_gap_ms)
+                if max_gap > allowed_gap_timedelta:
                     messages.append(f"WARNING: Large time gap detected in Aggregate Trades data: {max_gap}. Data might be incomplete for the day.")
-
 
     if all_checks_ok:
         return True, "All checks passed."

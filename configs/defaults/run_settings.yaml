@@ -32,3 +32,11 @@ run_settings:
   # --- Evaluation Period (Moved from evaluation_data) ---
   start_date_eval: "2024-01-04 00:00:00" # Start datetime for evaluation period (YYYY-MM-DD HH:MM:SS)
   end_date_eval: "2024-01-04 23:59:59"   # End datetime for evaluation period (YYYY-MM-DD HH:MM:SS)
+
+# -----------------------------------------------------------------------------
+# Validation Settings
+# -----------------------------------------------------------------------------
+validation_settings:
+  # Maximum allowed time gap in aggregate trade data before a warning is issued (in milliseconds).
+  # Default is 3600000 (1 hour).
+  max_agg_trade_gap_ms: 3600000
