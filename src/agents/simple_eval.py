@@ -96,8 +96,6 @@ def main():
     done = False
     episode_reward = 0.0
 
-    episode_reward = 0.0
-
     # Print a clear header for the log table
     print(
         f"{'Timestamp':<20} | {'Step':<5} | {'Price':<9} | {'Action':<5} | "
