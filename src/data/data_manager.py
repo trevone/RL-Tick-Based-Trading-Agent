@@ -8,7 +8,7 @@ import sys
 import traceback
 
 from src.data.config_loader import load_config
-from src.data.path_manager import get_data_path_for_day
+from src.data.path_manager import get_data_path_for_day, generate_data_config_hash_key
 from src.data.binance_client import fetch_and_cache_tick_data, fetch_and_cache_kline_data
 from src.data.data_validator import validate_daily_data
 
@@ -202,6 +202,11 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
     print(f"--- Managing K-LINE DATA ({interval}) ---")
     print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
 
+    # Generate kline_hash
+    ta_features_for_hash = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
+    config_for_hash = {"features": ta_features_for_hash}
+    kline_hash = generate_data_config_hash_key(config_for_hash) if ta_features_for_hash else None
+
     current_date = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
     end_date = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
 
@@ -223,7 +228,8 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
         }
         path_kwargs = {
             "interval": interval,
-            "price_features_to_add": price_features_to_add
+            "price_features_to_add": price_features_to_add,
+            "kline_config_hash": kline_hash # Pass hash to path manager
         }
 
         _manage_single_day_data(
@@ -237,35 +243,3 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
         )
         current_date += timedelta(days=1)
     print("\nK-line data management process completed.")
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Download and manage data for a specified date range.")
-    parser.add_argument("--start_date", required=True, help="Start date in YYYY-MM-DD format.")
-    parser.add_argument("--end_date", required=True, help="End date in YYYY-MM-DD format.")
-    parser.add_argument("--symbol", required=True, help="Trading symbol (e.g., 'BTCUSDT').")
-    parser.add_argument("--data_type", default="agg_trades", choices=["agg_trades", "kline"], 
-                        help="Type of data to download: 'agg_trades' or 'kline'. Default: agg_trades")
-    parser.add_argument("--interval", default="1h", help="Interval for kline data (e.g., '1m', '1h', '1d'). Only applies to 'kline' data_type. Default: 1h")
-    parser.add_argument("--kline_features", nargs='*', default=['Open', 'High', 'Low', 'Close', 'Volume'], 
-                        help="Space-separated list of kline price features (e.g., 'Open High Close SMA_20'). Only applies to 'kline' data_type.")
-    
-    args = parser.parse_args()
-
-    current_system_date = datetime.now(timezone.utc).date() 
-    start_date_arg_dt = datetime.strptime(args.start_date, '%Y-%m-%d').date()
-    end_date_arg_dt = datetime.strptime(args.end_date, '%Y-%m-%d').date()
-
-    if start_date_arg_dt > current_system_date:
-        print(f"\nWARNING: Your start date ({args.start_date}) is in the future. You will likely receive no data.\n")
-    elif end_date_arg_dt > current_system_date:
-         print(f"\nWARNING: Your end date ({args.end_date}) is in the future. You may receive partial data.\n")
-    if end_date_arg_dt < start_date_arg_dt:
-        print(f"\nERROR: Your end date ({args.end_date}) is before your start date ({args.start_date}).\n")
-        sys.exit(1)
-
-    if args.data_type == "agg_trades":
-        download_and_manage_data(args.start_date, args.end_date, args.symbol)
-    elif args.data_type == "kline":
-        download_and_manage_kline_data(args.start_date, args.end_date, args.symbol, args.interval, args.kline_features)
-    else:
-        print(f"Error: Invalid data_type '{args.data_type}' specified.")

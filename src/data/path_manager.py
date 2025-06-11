@@ -10,7 +10,8 @@ RANGE_CACHE_SUBDIR = "range_cache"
 
 def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades",
                           interval: str = None, price_features_to_add: list = None,
-                          cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None) -> str:
+                          cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None,
+                          kline_config_hash: str = None) -> str:
     
     # Base directory includes symbol and data_type
     base_dir = os.path.join(cache_dir, symbol, data_type)
@@ -33,20 +34,19 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
         safe_filename = f"{filename_prefix}_{symbol}_{date_str}{resample_suffix}.parquet"
     elif data_type == "kline":
         if not interval: raise ValueError("Interval must be provided for kline data type.")
-        sorted_features_str = ""
-        if price_features_to_add:
-            normalized_features_for_filename = sorted([re.sub(r'[^a-zA-Z0-9]', '', f).lower() for f in price_features_to_add])
-            sorted_features_str = "_".join(normalized_features_for_filename)
-            if sorted_features_str: sorted_features_str = f"_{sorted_features_str}"
+        
+        # Use config hash for filename instead of features string.
+        config_hash_suffix = f"_{kline_config_hash}" if kline_config_hash else ""
+        
         filename_prefix = "bn_klines"
-        safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}{sorted_features_str}.parquet"
+        safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}{config_hash_suffix}.parquet"
         full_data_path = base_dir # kline data remains in data_type folder
     else:
         raise ValueError(f"Unsupported data_type: {data_type}. Must be 'agg_trades' or 'kline'.")
         
     return os.path.join(full_data_path, safe_filename)
 
-def _generate_data_config_hash_key(params: dict, length: int = 10) -> str:
+def generate_data_config_hash_key(params: dict, length: int = 10) -> str:
     if 'price_features' in params and isinstance(params['price_features'], list):
         params['price_features'] = sorted(params['price_features'])
     config_string = json.dumps(convert_to_native_types(params), sort_keys=True, ensure_ascii=False)
@@ -56,7 +56,7 @@ def _get_range_cache_path(symbol: str, start_date_str: str, end_date_str: str, d
                           cache_config_params: dict, cache_dir: str = DATA_CACHE_DIR) -> str:
     symbol_cache_dir = os.path.join(cache_dir, symbol)
     range_cache_dir = os.path.join(symbol_cache_dir, RANGE_CACHE_SUBDIR)
-    config_hash = _generate_data_config_hash_key(cache_config_params)
+    config_hash = generate_data_config_hash_key(cache_config_params)
     safe_start = start_date_str.replace(" ", "_").replace(":", "")
     safe_end = end_date_str.replace(" ", "_").replace(":", "")
     filename = f"{config_hash}_{symbol}_{data_type_suffix}_{safe_start}_to_{safe_end}.parquet"

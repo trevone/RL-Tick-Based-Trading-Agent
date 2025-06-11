@@ -6,7 +6,7 @@ import sys
 import traceback
 from tqdm import tqdm
 from src.data.feature_engineer import calculate_technical_indicators
-from src.data.path_manager import get_data_path_for_day
+from src.data.path_manager import get_data_path_for_day, generate_data_config_hash_key
 
 try:
     from binance.client import Client
@@ -30,11 +30,15 @@ def fetch_and_cache_kline_data(
         _print_fn("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
         return pd.DataFrame()
 
-    ta_features_for_filename = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
+    # Generate config hash from price features
+    ta_features_for_hash = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
+    config_for_hash = {"features": ta_features_for_hash}
+    kline_hash = generate_data_config_hash_key(config_for_hash) if ta_features_for_hash else None
+
     daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
     cache_file = get_data_path_for_day(
         date_str=daily_file_date_str, symbol=symbol, data_type="kline",
-        interval=interval, price_features_to_add=ta_features_for_filename, cache_dir=cache_dir
+        interval=interval, cache_dir=cache_dir, kline_config_hash=kline_hash
     )
 
     os.makedirs(os.path.dirname(cache_file), exist_ok=True)
@@ -47,7 +51,7 @@ def fetch_and_cache_kline_data(
         try:
             df = pd.read_parquet(cache_file) if cache_file_type == "parquet" else pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if df.index.tz is None and not df.empty: df.index = df.index.tz_localize('UTC')
-            missing_tas = [ta for ta in ta_features_for_filename if ta not in df.columns]
+            missing_tas = [ta for ta in ta_features_for_hash if ta not in df.columns]
             if missing_tas:
                 if log_level != "none": _print_fn(f"Warning: Cached K-line data {cache_file} missing TAs: {missing_tas}. Refetching for this day."); sys.stdout.flush()
                 if log_level == "detailed": _print_fn(f"DEBUG_KLINE_DAILY: Removing daily K-line cache due to missing TAs: {cache_file}"); sys.stdout.flush()
@@ -74,7 +78,7 @@ def fetch_and_cache_kline_data(
         klines_raw = client.get_historical_klines(symbol, interval, start_date_str, end_str=end_date_str)
         if not klines_raw:
             if log_level != "none": _print_fn(f"No k-lines returned by API for {symbol} {start_date_str}-{end_date_str} (interval {interval})."); sys.stdout.flush()
-            empty_df = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_filename)
+            empty_df = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_hash)
             empty_df.index = pd.to_datetime([]).tz_localize('UTC')
             if cache_file_type == "parquet": empty_df.to_parquet(cache_file)
             else: empty_df.to_csv(cache_file)
@@ -103,11 +107,11 @@ def fetch_and_cache_kline_data(
         return df_with_ta
     except BinanceAPIException as bae:
         _print_fn(f"Binance API Exception during K-line fetch for {daily_file_date_str}: Code={bae.code}, Message='{bae.message}'"); sys.stdout.flush()
-        return pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_filename).set_index(pd.to_datetime([]).tz_localize('UTC'))
+        return pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_hash).set_index(pd.to_datetime([]).tz_localize('UTC'))
     except Exception as e:
         _print_fn(f"Unexpected error during K-line fetch/processing for {daily_file_date_str}: {e}"); sys.stdout.flush()
         traceback.print_exc()
-        return pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_filename).set_index(pd.to_datetime([]).tz_localize('UTC'))
+        return pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_hash).set_index(pd.to_datetime([]).tz_localize('UTC'))
 
 def fetch_continuous_aggregate_trades(
     symbol: str, start_date_str: str, end_date_str: str,
