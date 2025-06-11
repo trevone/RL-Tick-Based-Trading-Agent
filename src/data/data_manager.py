@@ -77,7 +77,8 @@ def load_configs_for_data_management(config_dir="configs/defaults") -> dict:
     ]
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
-def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cache_dir, path_manager_kwargs, fetch_function, fetch_function_kwargs):
+# CORRECTED: Added price_features_to_add parameter
+def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cache_dir, path_manager_kwargs, fetch_function, fetch_function_kwargs, price_features_to_add=None):
     """
     Generic helper function to manage downloading and validating data for a single day.
     """
@@ -133,7 +134,12 @@ def _manage_single_day_data(date_str_for_file, symbol, data_type, historical_cac
             print(f"  Validating data at {file_path}...")
             sys.stdout.flush()
             try:
-                is_valid, message = validate_daily_data(file_path, log_level='none')
+                # CORRECTED: Pass price_features_to_add to the validator
+                is_valid, message = validate_daily_data(
+                    file_path, 
+                    log_level='none', 
+                    price_features_to_add=price_features_to_add
+                )
                 if is_valid:
                     print(f"  Validation successful: {message.splitlines()[0]}")
                 else:
@@ -224,7 +230,8 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
             "api_key": binance_settings.get("api_key"),
             "api_secret": binance_settings.get("api_secret"),
             "testnet": binance_settings.get("testnet", False),
-            "kline_config_hash": kline_hash
+            "kline_config_hash": kline_hash,
+            "price_features_to_add": price_features_to_add # CORRECTED: Pass features to fetcher
         }
         path_kwargs = {
             "interval": interval,
@@ -232,6 +239,7 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
             "kline_config_hash": kline_hash # Pass hash to path manager
         }
 
+        # CORRECTED: Pass price_features_to_add to the management function
         _manage_single_day_data(
             date_str_for_file=date_str,
             symbol=symbol,
@@ -239,7 +247,8 @@ def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: st
             historical_cache_dir=historical_cache_dir,
             path_manager_kwargs=path_kwargs,
             fetch_function=fetch_and_cache_kline_data,
-            fetch_function_kwargs=fetch_kwargs
+            fetch_function_kwargs=fetch_kwargs,
+            price_features_to_add=price_features_to_add
         )
         current_date += timedelta(days=1)
     print("\nK-line data management process completed.")
@@ -266,7 +275,6 @@ def main():
             interval=args.interval,
             price_features_to_add=args.price_features
         )
-    # ---- VVVV ----  THIS IS THE CORRECTED BLOCK ---- VVVV ----
     elif args.data_type == 'agg_trades':
         print(f"--- Starting AGGREGATE TRADES Data Management for {args.symbol} ---")
         download_and_manage_data(
@@ -274,7 +282,6 @@ def main():
             end_date_str_arg=args.end_date,
             symbol=args.symbol
         )
-    # ---- ^^^^ ----  THIS IS THE CORRECTED BLOCK ---- ^^^^ ----
     else:
         print(f"Data type '{args.data_type}' is not supported by this script.")
 
