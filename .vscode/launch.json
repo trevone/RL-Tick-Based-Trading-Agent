@@ -15,6 +15,22 @@
             "type": "debugpy",
             "request": "launch",
             "module": "src.agents.simple_eval"
+        },
+        {
+            "name": "Data manager",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.data.data_manager",
+            "args": [
+                "--start_date",
+                "2024-12-01",
+                "--end_date",
+                "2025-06-01",
+                "--symbol",
+                "ETHUSDT",
+                "--data_type",
+                "agg_trades"
+            ]
         }
     ]
 }
