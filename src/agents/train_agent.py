@@ -77,20 +77,20 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
     print("\n--- Preparing Data ---")
     # Load K-line data for training, passing the new technical_indicators_config
     kline_df_train = load_kline_data_for_range(
-        symbol=config["training_data"]["symbol"], # Changed: Get symbol from training_data
-        start_date_str=config["training_data"]["start_date"], # Changed: Get start_date from training_data
-        end_date_str=config["training_data"]["end_date"],     # Changed: Get end_date from training_data
-        interval=config["training_data"]["timeframe"],        # Changed: Get timeframe from training_data
-        technical_indicators_config=technical_indicators_config, # Changed: Pass the full TA config
+        symbol=config["training_data"]["symbol"],
+        start_date_str=config["training_data"]["start_date"],
+        end_date_str=config["training_data"]["end_date"],
+        interval=config["training_data"]["timeframe"],
+        technical_indicators_config=technical_indicators_config,
         cache_dir=run_settings.get("historical_cache_dir"),
         binance_settings=config.get("binance_settings")
     )
     
     # Load tick data for training
     tick_df_train = load_tick_data_for_range(
-        symbol=config["training_data"]["symbol"], # Changed: Get symbol from training_data
-        start_date_str=config["training_data"]["start_date"], # Changed: Get start_date from training_data
-        end_date_str=config["training_data"]["end_date"],     # Changed: Get end_date from training_data
+        symbol=config["training_data"]["symbol"],
+        start_date_str=config["training_data"]["start_date"],
+        end_date_str=config["training_data"]["end_date"],
         cache_dir=run_settings.get("historical_cache_dir"),
         binance_settings=config.get("binance_settings"),
         tick_resample_interval_ms=env_config.get("tick_resample_interval_ms")
@@ -132,22 +132,22 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
     # 5. Setup Evaluation Environment & Callback
     eval_callback = None
     
-    # Load K-line data for evaluation
+    # Load K-line data for evaluation, using training_data's symbol
     kline_df_eval = load_kline_data_for_range(
-        symbol=config["evaluation_data"]["symbol"], # Changed: Get symbol from evaluation_data
-        start_date_str=config["evaluation_data"]["start_date"], # Changed: Get start_date from evaluation_data
-        end_date_str=config["evaluation_data"]["end_date"],     # Changed: Get end_date from evaluation_data
-        interval=config["evaluation_data"]["timeframe"],        # Changed: Get timeframe from evaluation_data
-        technical_indicators_config=technical_indicators_config, # Changed: Pass the full TA config
+        symbol=config["training_data"]["symbol"], # FIXED: Get symbol from training_data for evaluation
+        start_date_str=config["evaluation_data"]["start_date"],
+        end_date_str=config["evaluation_data"]["end_date"],
+        interval=config["evaluation_data"]["timeframe"],
+        technical_indicators_config=technical_indicators_config,
         cache_dir=run_settings.get("historical_cache_dir"),
         binance_settings=config.get("binance_settings")
     )
 
-    # Load tick data for evaluation
+    # Load tick data for evaluation, using training_data's symbol
     tick_df_eval = load_tick_data_for_range(
-        symbol=config["evaluation_data"]["symbol"], # Changed: Get symbol from evaluation_data
-        start_date_str=config["evaluation_data"]["start_date"], # Changed: Get start_date from evaluation_data
-        end_date_str=config["evaluation_data"]["end_date"],     # Changed: Get end_date from evaluation_data
+        symbol=config["training_data"]["symbol"], # FIXED: Get symbol from training_data for evaluation
+        start_date_str=config["evaluation_data"]["start_date"],
+        end_date_str=config["evaluation_data"]["end_date"],
         cache_dir=run_settings.get("historical_cache_dir"),
         binance_settings=config.get("binance_settings"),
         tick_resample_interval_ms=env_config.get("tick_resample_interval_ms")

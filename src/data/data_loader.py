@@ -18,8 +18,8 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
 
     Args:
         symbol (str): The trading symbol (e.g., "BTCUSDT").
-        start_date_str (str): The start date for the data range (e.g., "YYYY-MM-DD").
-        end_date_str (str): The end date for the data range (e.g., "YYYY-MM-DD").
+        start_date_str (str): The start date for the data range (e.g., "YYYY-MM-DD HH:MM:SS").
+        end_date_str (str): The end date for the data range (e.g., "YYYY-MM-DD HH:MM:SS").
         cache_dir (str, optional): Base directory for data caching. Defaults to DATA_CACHE_DIR.
         binance_settings (Dict, optional): Dictionary of Binance API settings.
         tick_resample_interval_ms (int, optional): If provided, raw tick data will be resampled
@@ -69,9 +69,13 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
     elif log_level == "detailed":
         print(f"DEBUG_LOAD_TICK (Range): Full range cache MISS: {range_cache_file_path}"); sys.stdout.flush()
 
-    # Parse date strings from YYYY-MM-DD format
-    start_date_obj = datetime.strptime(start_date_str, '%Y-%m-%d').date() # Changed format
-    end_date_obj = datetime.strptime(end_date_str, '%Y-%m-%d').date()     # Changed format
+    # Parse date strings from YYYY-MM-DD HH:MM:SS format
+    start_datetime_full = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S') # Reverted format
+    end_datetime_full = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')     # Reverted format
+    
+    start_date_obj = start_datetime_full.date()
+    end_date_obj = end_datetime_full.date()
+
     all_data_frames = []
     current_date_obj = start_date_obj
 
@@ -118,12 +122,12 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
                 if log_level != "none": print(f"Missing raw daily data for {symbol} on {date_str_for_day}. Fetching."); sys.stdout.flush()
                 # Construct full datetime objects for API calls
                 day_start_dt_utc = datetime.combine(current_date_obj, datetime.min.time(), tzinfo=timezone.utc)
-                day_end_dt_utc = datetime.combine(current_date_obj, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) # Ensure no microseconds
+                day_end_dt_utc = datetime.combine(current_date_obj, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc)
                 
                 df_raw_daily = fetch_continuous_aggregate_trades(
                     symbol=symbol,
                     start_date_str=day_start_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                    end_date_str=day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S"), # Corrected format here
+                    end_date_str=day_end_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
                     cache_dir=cache_dir,
                     api_key=binance_settings.get("api_key"),
                     api_secret=binance_settings.get("api_secret"),
@@ -183,15 +187,13 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
         try:
             # Apply precise datetime filter after combining
             start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
-            # When parsing from YYYY-MM-DD and then localizing to UTC, we effectively set time to midnight.
-            # For end_date_str, we want to include the whole day, so we adjust to just before the next day's midnight.
-            end_datetime_utc_inclusive = pd.to_datetime(end_date_str, utc=True) + timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+            end_datetime_utc = pd.to_datetime(end_date_str, utc=True) # Use the exact end datetime from config
 
             original_count = len(combined_df)
-            # Use inclusive bounds for filtering
-            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc_inclusive]
+            # Use inclusive bounds for filtering based on exact timestamps from config
+            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
             if log_level in ["normal", "detailed"] and original_count > 0:
-                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc_inclusive}")
+                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
         except Exception as e_filter:
             if log_level != "none": print(f"WARNING: Could not apply precise datetime filter to combined tick data: {e_filter}.")
         
@@ -215,8 +217,8 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
 
     Args:
         symbol (str): The trading symbol (e.g., "BTCUSDT").
-        start_date_str (str): The start date for the data range (e.g., "YYYY-MM-DD").
-        end_date_str (str): The end date for the data range (e.g., "YYYY-MM-DD").
+        start_date_str (str): The start date for the data range (e.g., "YYYY-MM-DD HH:MM:SS").
+        end_date_str (str): The end date for the data range (e.g., "YYYY-MM-DD HH:MM:SS").
         interval (str): K-line interval (e.g., "1m", "1h", "1d").
         technical_indicators_config (Dict): A dictionary defining the technical indicators
                                             and their parameters to be included as features.
@@ -280,9 +282,13 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
             if log_level != "none": print(f"Error loading from range cache {range_cache_file_path}: {e}. Re-processing."); sys.stdout.flush()
             if os.path.exists(range_cache_file_path): os.remove(range_cache_file_path)
 
-    # Parse date strings from YYYY-MM-DD format
-    start_date_obj = datetime.strptime(start_date_str, '%Y-%m-%d').date() # Changed format
-    end_date_obj = datetime.strptime(end_date_str, '%Y-%m-%d').date()     # Changed format
+    # Parse date strings from YYYY-MM-DD HH:MM:SS format
+    start_datetime_full = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S') # Reverted format
+    end_datetime_full = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')     # Reverted format
+    
+    start_date_obj = start_datetime_full.date()
+    end_date_obj = end_datetime_full.date()
+
     all_data_frames = []
     current_date_obj = start_date_obj
 
@@ -293,7 +299,7 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         date_str_for_day = current_date_obj.strftime('%Y-%m-%d')
         # Construct full datetime objects for API calls, ensuring UTC timezone
         day_api_start_str = datetime.combine(current_date_obj, datetime.min.time(), tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        day_api_end_str = datetime.combine(current_date_obj, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S") # Corrected format
+        day_api_end_str = datetime.combine(current_date_obj, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         df_daily = fetch_and_cache_kline_data(
             symbol=symbol, interval=interval,
@@ -325,13 +331,14 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
 
         try:
+            # Apply precise datetime filter using the exact start/end datetimes from config
             start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
-            end_datetime_utc_inclusive = pd.to_datetime(end_date_str, utc=True) + timedelta(days=1) - pd.Timedelta(nanoseconds=1) # Adjusted for inclusive end date
+            end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
 
             original_count = len(combined_df)
-            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc_inclusive]
+            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
             if log_level in ["normal", "detailed"] and original_count > 0:
-                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc_inclusive}")
+                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
         except Exception as e_filter:
             if log_level != "none": print(f"WARNING: Could not apply precise datetime filter to combined k-line data: {e_filter}.")
 
