@@ -1,10 +1,10 @@
-# configs/defaults/evaluation_data.yaml
+# configs/defaults/training_data.yaml
 # Defines default settings for training data loading.
 
-evaluation_data:
+training_data:
   symbol: "BTCUSDT" # Default trading symbol
-  start_date: "2025-04-01" # Default start date for training data
-  end_date: "2025-04-11" # Default end date for training data
+  start_date: "2025-01-01" # Default start date for training data
+  end_date: "2025-03-31" # Default end date for training data
   timeframe: "1h" # Default K-line interval (e.g., 1m, 5m, 1h, 1d)
   # Add other data-related default settings here as needed,
   # such as 'data_source', 'pre_caching_enabled', etc.

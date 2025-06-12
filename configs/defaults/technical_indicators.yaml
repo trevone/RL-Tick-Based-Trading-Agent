@@ -1,0 +1,98 @@
+# configs/defaults/technical_indicators.yaml
+# Defines the set of technical indicators and their parameters to be used as features.
+# Each entry is a feature name (key) and its configuration (value).
+# 'indicator': (Optional) The TA-Lib indicator function name if different from the feature name.
+# 'params': (Optional) A dictionary of parameters to pass to the TA-Lib function.
+# 'output_field': (Optional) For multi-output indicators (e.g., MACD, BBANDS),
+#                 specifies which output field (index) to use. Defaults to 0.
+
+technical_indicators:
+  # Moving Averages
+  SMA_10:
+    indicator: SMA
+    params:
+      timeperiod: 10
+  EMA_20:
+    indicator: EMA
+    params:
+      timeperiod: 20
+
+  # Momentum Indicators
+  RSI_14:
+    indicator: RSI
+    params:
+      timeperiod: 14
+  MACD_line:
+    indicator: MACD
+    params:
+      fastperiod: 12
+      slowperiod: 26
+      signalperiod: 9
+    output_field: 0 # MACD line
+  MACD_signal:
+    indicator: MACD
+    params:
+      fastperiod: 12
+      slowperiod: 26
+      signalperiod: 9
+    output_field: 1 # MACD Signal line
+  ADX_14:
+    indicator: ADX
+    params:
+      timeperiod: 14
+  STOCH_K:
+    indicator: STOCH
+    params:
+      fastk_period: 14
+      slowk_period: 3
+      slowd_period: 3
+    output_field: 0 # SlowK line
+  STOCH_D:
+    indicator: STOCH
+    params:
+      fastk_period: 14
+      slowk_period: 3
+      slowd_period: 3
+    output_field: 1 # SlowD line
+
+  # Volatility Indicators
+  ATR_14:
+    indicator: ATR
+    params:
+      timeperiod: 14
+  BBANDS_Upper:
+    indicator: BBANDS
+    params:
+      timeperiod: 20
+      nbdevup: 2
+      nbdevdn: 2
+      matype: 0 # SMA
+    output_field: 0 # Upper Band
+  BBANDS_Middle:
+    indicator: BBANDS
+    params:
+      timeperiod: 20
+      nbdevup: 2
+      nbdevdn: 2
+      matype: 0
+    output_field: 1 # Middle Band
+  BBANDS_Lower:
+    indicator: BBANDS
+    params:
+      timeperiod: 20
+      nbdevup: 2
+      nbdevdn: 2
+      matype: 0
+    output_field: 2 # Lower Band
+
+  # Volume Indicators
+  AD_line:
+    indicator: AD
+  OBV_line:
+    indicator: OBV
+
+  # Candlestick Patterns (examples)
+  CDLDOJI:
+    indicator: CDLDOJI
+  CDLHAMMER:
+    indicator: CDLHAMMER

@@ -3,7 +3,10 @@ import os
 from ..data.config_loader import load_config
 
 def load_default_configs_for_training(config_dir="configs/defaults") -> dict:
-    """Loads all default configurations for a training run."""
+    """
+    Loads all default configurations for a training run.
+    This now includes technical indicator definitions and training data settings.
+    """
     default_config_paths = [
         os.path.join(config_dir, "run_settings.yaml"),
         os.path.join(config_dir, "environment.yaml"),
@@ -15,10 +18,15 @@ def load_default_configs_for_training(config_dir="configs/defaults") -> dict:
         os.path.join(config_dir, "binance_settings.yaml"),
         os.path.join(config_dir, "evaluation_data.yaml"),
         os.path.join(config_dir, "hash_keys.yaml"),
+        os.path.join(config_dir, "technical_indicators.yaml"), # NEW: Add technical indicators config
+        os.path.join(config_dir, "training_data.yaml"),       # NEW: Add training data config
     ]
+    # The load_config function will handle merging these defaults with the main config.yaml
     return load_config(main_config_path="config.yaml", default_config_paths=default_config_paths)
 
 def load_default_configs_for_evaluation(config_dir="configs/defaults") -> dict:
-    """Loads all default configurations for an evaluation run."""
-    # This function is often the same as for training, but kept separate for future flexibility.
+    """
+    Loads all default configurations for an evaluation run.
+    This function is typically the same as for training, but kept separate for future flexibility.
+    """
     return load_default_configs_for_training(config_dir)

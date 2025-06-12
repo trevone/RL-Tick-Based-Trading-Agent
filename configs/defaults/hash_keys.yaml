@@ -12,7 +12,6 @@ hash_config_keys:
   # Changing any of these parameters will result in a new hash and a new log directory.
   environment:
     - kline_window_size
-    - kline_price_features
     - tick_feature_window_size
     - tick_features_to_use
     - tick_resample_interval_ms # NEW: Include in hash calculation

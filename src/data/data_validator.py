@@ -8,6 +8,7 @@ import argparse
 import re
 import traceback
 import time
+import json # Added for pretty printing dict
 
 # --- UPDATED IMPORTS ---
 from src.data.path_manager import DATA_CACHE_DIR
@@ -17,7 +18,7 @@ from src.data.path_manager import DATA_CACHE_DIR
 EXPECTED_AGG_TRADES_COLUMNS_INFO = {
     'Price': {'dtype': np.float64, 'not_null': True, 'check_positive': True},
     'Quantity': {'dtype': np.float64, 'not_null': True, 'check_positive': True},
-    'IsBuyerMaker': {'dtype': np.bool_, 'not_null': False},
+    'IsBuyerMaker': {'dtype': bool, 'not_null': False},
 }
 
 # Expected columns and their properties for kline data (OHLCV + potential TAs)
@@ -35,10 +36,11 @@ AGG_TRADES_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_agg_trades)_" # Matches the fixed prefix "bn_agg_trades_"
     r"(?P<symbol>[A-Z0-9]+)_"      # Matches the symbol (e.g., BTCUSDT)
     r"(?P<date>\d{4}-\d{2}-\d{2})" # Matches YYYY-MM-DD
+    r"(?:_R(?P<resample_interval_ms>\d+)ms)?" # Optional resample interval for agg_trades
     r"\.parquet$"                  # Matches ".parquet" extension
 )
 
-# CORRECTED Regex for kline filenames:
+# Regex for kline filenames:
 # bn_klines_SYMBOL_INTERVAL_YYYY-MM-DD_HASH.parquet
 KLINE_FILENAME_PATTERN = re.compile(
     r"^(?P<prefix>bn_klines)_"     # Matches the fixed prefix "bn_klines_"
@@ -52,6 +54,9 @@ KLINE_FILENAME_PATTERN = re.compile(
 
 # Helper to convert Binance interval string to timedelta
 def interval_to_timedelta(interval_str: str) -> timedelta:
+    """
+    Converts a Binance interval string (e.g., "1m", "4h", "1d") to a timedelta object.
+    """
     unit = interval_str[-1]
     value = int(interval_str[:-1])
     if unit == 'm':
@@ -69,7 +74,7 @@ def interval_to_timedelta(interval_str: str) -> timedelta:
         raise ValueError(f"Unsupported interval unit: {interval_str}")
 
 
-def parse_filename_for_metadata(filename):
+def parse_filename_for_metadata(filename: str) -> dict or None:
     """
     Parses the filename (e.g., bn_agg_trades_BTCUSDT_2024-01-01.parquet
     or bn_klines_BTCUSDT_1h_2024-01-01_a1b2c3d4e5.parquet)
@@ -85,14 +90,15 @@ def parse_filename_for_metadata(filename):
         try:
             parsed_date = datetime.strptime(data['date'], '%Y-%m-%d').date()
             start_time = datetime.combine(parsed_date, datetime.min.time(), tzinfo=timezone.utc)
-            end_time = datetime.combine(parsed_date, datetime.max.time(), tzinfo=timezone.utc) # End of day
+            end_time = datetime.combine(parsed_date, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) # End of day, remove micros
             
             return {
                 "data_type": "agg_trades",
                 "symbol": data['symbol'],
                 "start_time_utc": start_time,
                 "end_time_utc": end_time,
-                "prefix": data['prefix']
+                "prefix": data['prefix'],
+                "resample_interval_ms": int(data['resample_interval_ms']) if data['resample_interval_ms'] else None
             }
         except ValueError:
             return None
@@ -104,10 +110,8 @@ def parse_filename_for_metadata(filename):
         try:
             parsed_date = datetime.strptime(data['date'], '%Y-%m-%d').date()
             start_time = datetime.combine(parsed_date, datetime.min.time(), tzinfo=timezone.utc)
-            end_time = datetime.combine(parsed_date, datetime.max.time(), tzinfo=timezone.utc) # End of day
+            end_time = datetime.combine(parsed_date, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) # End of day, remove micros
             
-            # NOTE: We no longer parse features from the filename.
-            # The calling function (in data_manager) is now responsible for knowing the feature set.
             return {
                 "data_type": "kline",
                 "symbol": data['symbol'],
@@ -122,10 +126,10 @@ def parse_filename_for_metadata(filename):
     
     return None
 
-def validate_daily_data(filepath: str, log_level: str = "normal", price_features_to_add: list = None, max_allowed_gap_ms: int = 3600000) -> tuple[bool, str]:
+def validate_daily_data(filepath: str, log_level: str = "normal", technical_indicators_config: dict = None, max_allowed_gap_ms: int = 3600000) -> tuple[bool, str]:
     """
     Performs various checks on a single daily Parquet cache file for aggregate trades OR klines.
-    For klines, `price_features_to_add` should be provided to ensure all expected columns are present.
+    For klines, `technical_indicators_config` should be provided to ensure all expected columns are present.
     Returns True and a success message if all checks pass, False and an error message otherwise.
     """
     if log_level != "none":
@@ -135,7 +139,10 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
     max_read_retries = 10
     read_retry_delay_sec = 0.2
 
-    if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
+    if not os.path.exists(filepath):
+        return False, f"File not found: {filepath}"
+
+    if os.path.getsize(filepath) == 0:
         if log_level != "none":
             print(f"  File is 0 bytes: {filepath}. Treating as empty but valid.")
         return True, "DataFrame is empty (0 bytes). (May be valid for periods with no trades/klines)."
@@ -148,15 +155,14 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
             if df.empty:
                 return True, "DataFrame is empty after reading. (May be valid for periods with no trades/klines)."
             break
-        except FileNotFoundError:
-            if log_level != "none":
-                print(f"  WARNING: File not found during read attempt {i+1}/{max_read_retries}. Retrying in {read_retry_delay_sec}s...")
-            time.sleep(read_retry_delay_sec)
         except Exception as e:
-            traceback.print_exc()
-            return False, f"Could not read Parquet file (error type: {type(e).__name__}): {e}"
+            if log_level != "none":
+                print(f"  WARNING: Could not read Parquet file (attempt {i+1}/{max_read_retries}): {e}. Retrying in {read_retry_delay_sec}s...")
+                if log_level == "detailed":
+                    traceback.print_exc()
+            time.sleep(read_retry_delay_sec)
     else:
-        return False, f"File did not become readable after {max_read_retries} attempts. File not found or persistently inaccessible."
+        return False, f"File did not become readable after {max_read_retries} attempts. Error: {e if 'e' in locals() else 'Unknown'}"
 
     file_size_bytes = os.path.getsize(filepath)
     if log_level != "none":
@@ -169,6 +175,8 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
             print(f"  Parsed Metadata: Data Type={metadata['data_type']}, Symbol={metadata['symbol']}, Start={metadata['start_time_utc']}, End={metadata['end_time_utc']}")
             if metadata['data_type'] == 'kline':
                  print(f"    Interval={metadata['interval']}, ConfigHash={metadata['config_hash']}")
+            elif metadata['data_type'] == 'agg_trades' and metadata['resample_interval_ms']:
+                 print(f"    Resample Interval={metadata['resample_interval_ms']}ms")
     else:
         return False, f"Could not parse filename '{os.path.basename(filepath)}' for metadata. It does not match the expected pattern."
 
@@ -180,11 +188,17 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
         expected_cols_info = EXPECTED_AGG_TRADES_COLUMNS_INFO
     elif metadata['data_type'] == 'kline':
         expected_cols_info = EXPECTED_KLINE_BASE_COLUMNS_INFO.copy()
-        # CORRECTED: Use the passed-in feature list to build expected columns
-        if price_features_to_add:
-            for feature in price_features_to_add:
-                if feature not in expected_cols_info:
-                    expected_cols_info[feature] = {'dtype': np.float64, 'not_null': False}
+        # Add technical indicator features if provided in the config
+        if technical_indicators_config:
+            for feature_name in technical_indicators_config.keys(): # Iterate through keys (feature names)
+                if feature_name not in expected_cols_info:
+                    # Assume TA columns are float64 and can have nulls (filled later by feature_engineer)
+                    expected_cols_info[feature_name] = {'dtype': np.float64, 'not_null': False}
+        else:
+            if log_level != "none":
+                print("  WARNING: technical_indicators_config not provided for K-line validation. "
+                      "Only base OHLCV columns will be strictly validated for existence.")
+
 
     if not isinstance(df.index, pd.DatetimeIndex):
         messages.append(f"Index is not a DatetimeIndex. Actual type: {type(df.index)}")
@@ -210,12 +224,13 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
 
     for col_name, info in expected_cols_info.items():
         if col_name not in df.columns:
-            continue
+            continue # Already reported as missing
 
         expected_dtype = pd.Series([], dtype=info['dtype']).dtype
         actual_dtype = df[col_name].dtype
         
-        if actual_dtype != expected_dtype:
+        # More robust dtype comparison
+        if not pd.api.types.is_dtype_equal(actual_dtype, expected_dtype): # Changed for NumPy 2.0 compatibility
             messages.append(f"Column '{col_name}' dtype is '{actual_dtype}' but expected '{expected_dtype}'.")
             all_checks_ok = False
 
@@ -244,23 +259,36 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
         if metadata['data_type'] == 'kline':
             interval_td = interval_to_timedelta(metadata['interval'])
             
+            # Check first timestamp: should be close to expected start
             if min_time_in_df < expected_start - leeway:
                 messages.append(f"WARNING: First timestamp in K-line data ({min_time_in_df}) is slightly before expected start from filename ({expected_start}).")
-            elif min_time_in_df > expected_start + interval_td:
+            elif min_time_in_df > expected_start + interval_td + leeway: # Added leeway for interval_td
                 messages.append(f"ERROR: First timestamp in K-line data ({min_time_in_df}) is significantly after expected start from filename ({expected_start}). Data might be missing from start.")
                 all_checks_ok = False
             
-            expected_last_kline_open_time = pd.Timestamp(expected_end.date() + timedelta(days=1), tz=timezone.utc) - interval_td
+            # Calculate expected last kline open time for a full day (midnight to midnight)
+            # A daily file typically covers from 00:00:00 UTC to 23:59:59 UTC
+            # The last kline's open time should be (end of day - interval duration)
+            # E.g., for 1m interval, last kline opens at 23:59:00
+            expected_last_kline_open_time = pd.Timestamp(expected_end.date(), tz=timezone.utc) + timedelta(days=1) - interval_td
+            # Adjust to be within the day's boundaries if the interval crosses midnight
+            if expected_last_kline_open_time.day != expected_end.day:
+                expected_last_kline_open_time = pd.Timestamp(expected_end.date(), tz=timezone.utc).replace(hour=23, minute=59, second=59) - interval_td
 
             if max_time_in_df < expected_last_kline_open_time - leeway:
                 messages.append(f"ERROR: Last timestamp in K-line data ({max_time_in_df}) is significantly before expected end of daily coverage based on interval ({expected_last_kline_open_time}). Data might be incomplete for the day.")
                 all_checks_ok = False
-            elif max_time_in_df > expected_last_kline_open_time + leeway:
+            elif max_time_in_df > expected_last_kline_open_time + interval_td + leeway: # Added interval_td and leeway
                 messages.append(f"WARNING: Last timestamp in K-line data ({max_time_in_df}) is slightly after expected end of daily coverage based on interval ({expected_last_kline_open_time}).")
             
             if df.shape[0] > 1:
+                # Check for consistent intervals, allowing a small tolerance
                 time_diffs = df.index.to_series().diff().dropna()
-                if not ((time_diffs >= interval_td - timedelta(milliseconds=10)) & (time_diffs <= interval_td + timedelta(milliseconds=10))).all():
+                # Check if all time differences are approximately equal to the interval
+                # Use np.isclose for float comparison robustness
+                are_intervals_consistent = np.all(np.isclose(time_diffs.dt.total_seconds(), interval_td.total_seconds(), atol=0.01))
+                
+                if not are_intervals_consistent:
                     messages.append(f"ERROR: K-line intervals are not consistently {metadata['interval']}. Max gap: {time_diffs.max()}, Min gap: {time_diffs.min()}. Data might be incomplete or corrupted.")
                     all_checks_ok = False
 
@@ -280,10 +308,14 @@ def validate_daily_data(filepath: str, log_level: str = "normal", price_features
             if df.shape[0] > 1:
                 time_diffs = df.index.to_series().diff().dropna()
                 max_gap = time_diffs.max()
-                # CORRECTED: Use the millisecond gap parameter
+                # Use the millisecond gap parameter
                 allowed_gap_timedelta = timedelta(milliseconds=max_allowed_gap_ms)
                 if max_gap > allowed_gap_timedelta:
-                    messages.append(f"WARNING: Large time gap detected in Aggregate Trades data: {max_gap}. Data might be incomplete for the day.")
+                    messages.append(f"WARNING: Large time gap detected in Aggregate Trades data: {max_gap} (allowed: {allowed_gap_timedelta}). Data might be incomplete for the day.")
+                if log_level == "detailed":
+                    print(f"  Max time gap in data: {max_gap}")
+                    print(f"  Min time gap in data: {time_diffs.min()}")
+
 
     if all_checks_ok:
         return True, "All checks passed."
@@ -309,7 +341,35 @@ if __name__ == "__main__":
         choices=["none", "normal", "detailed"],
         help="Level of console logging: 'none', 'normal', 'detailed'. Default: 'normal'."
     )
+    # Add an argument to optionally provide technical indicator config for K-line validation
+    parser.add_argument(
+        "--technical_indicators_config_path",
+        type=str,
+        default=None,
+        help="Path to a YAML file defining technical indicators (e.g., configs/defaults/technical_indicators.yaml). "
+             "Required for full validation of K-line files with TAs."
+    )
     args = parser.parse_args()
+
+    # Load technical indicators config if path is provided
+    loaded_technical_indicators_config = None
+    if args.technical_indicators_config_path:
+        try:
+            import yaml # Assuming yaml is available for config loading
+            with open(args.technical_indicators_config_path, 'r') as f:
+                full_config = yaml.safe_load(f)
+                loaded_technical_indicators_config = full_config.get('technical_indicators', {})
+            print(f"Loaded technical indicators config from: {args.technical_indicators_config_path}")
+            if loaded_technical_indicators_config:
+                print(f"  Configured TAs: {json.dumps(list(loaded_technical_indicators_config.keys()), indent=2)}")
+        except FileNotFoundError:
+            print(f"ERROR: Technical indicators config file not found at '{args.technical_indicators_config_path}'.")
+            exit(1)
+        except Exception as e:
+            print(f"ERROR: Could not load technical indicators config from '{args.technical_indicators_config_path}': {e}")
+            traceback.print_exc()
+            exit(1)
+
 
     cache_directory = args.cache_dir
     if not os.path.isdir(cache_directory):
@@ -324,7 +384,12 @@ if __name__ == "__main__":
             print(f"ERROR: Specified file '{args.filepath}' is not a .parquet file.")
             exit(1)
         
-        is_valid, msg = validate_daily_data(args.filepath, log_level=args.log_level)
+        # Pass the loaded technical indicators config to the validation function
+        is_valid, msg = validate_daily_data(
+            args.filepath,
+            log_level=args.log_level,
+            technical_indicators_config=loaded_technical_indicators_config # Pass the config
+        )
         print(msg)
         if not is_valid:
             exit(1)
@@ -343,7 +408,17 @@ if __name__ == "__main__":
             overall_passed = 0
             overall_failed = 0
             for filepath in found_files:
-                is_valid, msg = validate_daily_data(filepath, log_level=args.log_level)
+                # When checking all files, we cannot assume a single technical_indicators_config applies
+                # unless we parse it from the filename hash (which is complex and out of scope for this step).
+                # So, for mass validation, we'll only validate base OHLCV for kline files,
+                # or pass the config if specified via the command line for *all* files.
+                # For simplicity, if --technical_indicators_config_path is given, it's applied to all kline files.
+                # Otherwise, only base OHLCV are checked for kline files during mass validation.
+                is_valid, msg = validate_daily_data(
+                    filepath,
+                    log_level=args.log_level,
+                    technical_indicators_config=loaded_technical_indicators_config # Pass the config
+                )
                 print(msg)
                 if is_valid:
                     overall_passed += 1
