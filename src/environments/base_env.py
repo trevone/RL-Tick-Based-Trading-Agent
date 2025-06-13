@@ -131,7 +131,9 @@ class SimpleTradingEnv(gym.Env):
                 # --- PERIODICALLY UPDATE LIVE TA INDICATORS ---
                 if TALIB_AVAILABLE and self.max_ta_period > 1:
                     if self.current_step % self.live_ta_recalc_interval == 0:
-                        recalc_start_idx = max(0, kline_idx - self.max_ta_period + 1)
+                        buffer = 26 
+                        recalc_start_idx = max(0, kline_idx - (self.max_ta_period + buffer) + 1)
+                        
                         live_recalc_window_df = self.raw_kline_df.iloc[recalc_start_idx:kline_idx + 1].copy()
                         live_recalc_window_df.iloc[-1, live_recalc_window_df.columns.get_loc('Close')] = current_tick_price
 
