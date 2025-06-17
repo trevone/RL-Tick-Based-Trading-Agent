@@ -91,6 +91,7 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
         eval_vec_env = make_vec_env(lambda: create_env(tick_df_eval, kline_df_eval, env_config, os.path.join(log_dir, "eval_monitor.csv")), n_envs=1)
         eval_env = VecNormalize(eval_vec_env, training=False, norm_obs=True, norm_reward=False)
         eval_env.obs_rms = env.obs_rms
+        eval_env.ret_rms = env.ret_rms
         
         eval_freq = int(run_settings.get("eval_freq_episodes", 10) * len(tick_df_train))
         eval_callback = EvalCallback(eval_env, best_model_save_path=model_save_dir, log_path=log_dir, eval_freq=max(1, eval_freq), n_eval_episodes=run_settings.get("n_evaluation_episodes", 5), deterministic=True)
