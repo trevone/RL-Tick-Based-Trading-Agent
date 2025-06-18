@@ -9,7 +9,7 @@ DATA_CACHE_DIR = "data_cache/"
 RANGE_CACHE_SUBDIR = "range_cache"
 
 def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trades",
-                          interval: str = None, price_features_to_add: list = None,
+                          interval: str = None, price_features_to_add: dict = None,
                           cache_dir: str = DATA_CACHE_DIR, resample_interval_ms: int = None) -> str:
     
     # Base directory includes symbol and data_type
@@ -34,7 +34,7 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
     elif data_type == "kline":
         if not interval: raise ValueError("Interval must be provided for kline data type.")
         if price_features_to_add:
-            ta_hash = _generate_data_config_hash_key({"price_features": price_features_to_add})
+            ta_hash = _generate_data_config_hash_key(price_features_to_add)
         filename_prefix = "bn_klines"
         safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}_{ta_hash}.parquet"
         full_data_path = base_dir # kline data remains in data_type folder

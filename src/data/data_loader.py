@@ -156,39 +156,32 @@ def load_tick_data_for_range(symbol: str, start_date_str: str, end_date_str: str
             if log_level != "none": print(f"Error saving combined tick data to range cache {range_cache_file_path}: {e}")
     return combined_df
 
-# ... (The `load_kline_data_for_range` function is also correct and needs no further changes)
-
 def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: str, interval: str,
-                              price_features: list, cache_dir: str = DATA_CACHE_DIR,
-                              binance_settings: Dict = None, log_level: str = "normal") -> pd.DataFrame:
-    if log_level != "none": print(f"[[load_kline_data_for_range ENTRY]] Log level received: {log_level}"); sys.stdout.flush()
+                              price_features: dict, cache_dir: str = DATA_CACHE_DIR,
+                              binance_settings: dict = None, log_level: str = "normal") -> pd.DataFrame:
+    if log_level != "none": print(f"[[load_kline_data_for_range ENTRY]] Log level: {log_level}"); sys.stdout.flush()
     if binance_settings is None: binance_settings = {}
 
-    sorted_price_features_for_hash = sorted(price_features or [])
+    # Pass the original dictionary/list to the cache path generator for consistent hashing
     range_cache_config = {
         "symbol": symbol, "start_date": start_date_str, "end_date": end_date_str,
-        "type": "klines", "interval": interval, "features": sorted_price_features_for_hash
+        "type": "klines", "interval": interval, "features": price_features
     }
     range_cache_file_path = _get_range_cache_path(symbol, start_date_str, end_date_str, f"klines_{interval}",
                                                   range_cache_config, cache_dir)
-
-    if log_level == "detailed":
-        print(f"DEBUG_LOAD_KLINE (Range): Attempting to load from full range cache: {range_cache_file_path}"); sys.stdout.flush()
 
     if os.path.exists(range_cache_file_path):
         try:
             if log_level != "none": print(f"Loading FULL RANGE kline data from cache: {range_cache_file_path}"); sys.stdout.flush()
             df_combined = pd.read_parquet(range_cache_file_path)
-            if not df_combined.empty and isinstance(df_combined.index, pd.DatetimeIndex):
+            
+            feature_names = list(price_features.keys()) if isinstance(price_features, dict) else price_features
+
+            if not df_combined.empty and all(feat in df_combined.columns for feat in feature_names):
                 if df_combined.index.tz is None: df_combined.index = df_combined.index.tz_localize('UTC')
-                if all(feat in df_combined.columns for feat in price_features):
-                    if log_level == "detailed": print(f"DEBUG_LOAD_KLINE (Range): Full range cache HIT. Shape: {df_combined.shape}"); sys.stdout.flush()
-                    return df_combined
-                else:
-                    if log_level != "none": print(f"Warning: Range cache file {range_cache_file_path} missing requested features. Re-processing."); sys.stdout.flush()
-                    os.remove(range_cache_file_path)
+                return df_combined
             else:
-                 if log_level != "none": print(f"Warning: Range cache file {range_cache_file_path} is empty or invalid. Re-processing."); sys.stdout.flush()
+                 if log_level != "none": print(f"Warning: Range cache file is missing features or is invalid. Re-processing."); sys.stdout.flush()
                  os.remove(range_cache_file_path)
         except Exception as e:
             if log_level != "none": print(f"Error loading from range cache {range_cache_file_path}: {e}. Re-processing."); sys.stdout.flush()
@@ -197,69 +190,51 @@ def load_kline_data_for_range(symbol: str, start_date_str: str, end_date_str: st
     start_date_obj = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S').date()
     end_date_obj = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S').date()
     all_data_frames = []
-    current_date_obj = start_date_obj
+    
+    date_range = pd.date_range(start=start_date_obj, end=end_date_obj, freq='D')
+    pbar_days_kline = tqdm(date_range, desc=f"Processing Klines {symbol} {interval}", leave=True, disable=(log_level=="none"))
 
-    pbar_days_kline = tqdm(total=(end_date_obj - start_date_obj).days + 1, desc=f"Processing Klines {symbol} {interval}", leave=True)
-
-    while current_date_obj <= end_date_obj:
-        date_str_for_day = current_date_obj.strftime('%Y-%m-%d')
-        day_api_start_str = datetime.combine(current_date_obj, datetime.min.time()).strftime("%Y-%m-%d %H:%M:%S")
-        day_api_end_str = datetime.combine(current_date_obj, datetime.max.time()).strftime("%Y-%m-%d %H:%M:%S")
+    for current_date_obj in pbar_days_kline:
+        day_api_start_str = current_date_obj.strftime("%Y-%m-%d 00:00:00")
+        day_api_end_str = current_date_obj.strftime("%Y-%m-%d 23:59:59")
 
         df_daily = fetch_and_cache_kline_data(
             symbol=symbol, interval=interval,
-            start_date_str=day_api_start_str,
-            end_date_str=day_api_end_str,
-            cache_dir=cache_dir,
-            price_features_to_add=price_features,
+            start_date_str=day_api_start_str, end_date_str=day_api_end_str,
+            cache_dir=cache_dir, price_features_to_add=price_features,
             api_key=binance_settings.get("api_key"), api_secret=binance_settings.get("api_secret"),
             testnet=binance_settings.get("testnet", False),
-            log_level="detailed" if log_level=="detailed" else "none",
-            api_request_delay_seconds=binance_settings.get("api_request_delay_seconds", 0.2),
-            pbar_instance=pbar_days_kline
+            log_level="detailed" if log_level=="detailed" else "none"
         )
 
         if df_daily is not None and not df_daily.empty:
             all_data_frames.append(df_daily)
 
-        current_date_obj += timedelta(days=1)
-        pbar_days_kline.update(1)
-    pbar_days_kline.close()
-
     if not all_data_frames:
-        if log_level != "none": print(f"No K-line data found or loaded for {symbol} in range {start_date_str} to {end_date_str} for interval {interval}.")
+        if log_level != "none": print(f"No K-line data loaded for {symbol} in range {start_date_str} to {end_date_str}.")
         return pd.DataFrame()
 
-    combined_df = pd.concat(all_data_frames)
-    if not combined_df.empty:
-        combined_df = combined_df.sort_index()
-        combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+    combined_df = pd.concat(all_data_frames).sort_index()
+    combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
 
-        try:
-            start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
-            end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
-            original_count = len(combined_df)
-            combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
-            if log_level in ["normal", "detailed"] and original_count > 0:
-                print(f"Applied precise datetime filter: {original_count} -> {len(combined_df)} rows from {start_datetime_utc} to {end_datetime_utc}")
-        except Exception as e_filter:
-            if log_level != "none": print(f"WARNING: Could not apply precise datetime filter to combined k-line data: {e_filter}.")
+    start_datetime_utc = pd.to_datetime(start_date_str, utc=True)
+    end_datetime_utc = pd.to_datetime(end_date_str, utc=True)
+    combined_df = combined_df.loc[start_datetime_utc:end_datetime_utc]
+    
+    feature_names = list(price_features.keys()) if isinstance(price_features, dict) else price_features
+    
+    final_cols = [col for col in feature_names if col in combined_df.columns]
+    missing_cols = [col for col in feature_names if col not in combined_df.columns]
+    if missing_cols and log_level != "none":
+        print(f"Warning: The following features were requested but not found in the final data: {missing_cols}")
 
-        for feat in price_features:
-            if feat not in combined_df.columns:
-                if log_level != "none": print(f"Warning: Feature '{feat}' missing in combined kline data. Filling with 0.")
-                combined_df[feat] = 0.0
-        try:
-            combined_df = combined_df[price_features]
-        except KeyError as e:
-            if log_level != "none": print(f"Error selecting final columns for K-line data: {e}. Available: {combined_df.columns.tolist()}")
-            combined_df = combined_df[[col for col in price_features if col in combined_df.columns]]
-
-        try:
-            os.makedirs(os.path.dirname(range_cache_file_path), exist_ok=True)
-            if log_level != "none": print(f"Saving combined kline data to range cache: {range_cache_file_path}")
-            combined_df.to_parquet(range_cache_file_path)
-        except Exception as e:
-            if log_level != "none": print(f"Error saving combined kline data to range cache {range_cache_file_path}: {e}")
+    combined_df = combined_df[final_cols]
+    
+    try:
+        os.makedirs(os.path.dirname(range_cache_file_path), exist_ok=True)
+        if log_level != "none": print(f"Saving combined kline data to range cache: {range_cache_file_path}")
+        combined_df.to_parquet(range_cache_file_path)
+    except Exception as e:
+        if log_level != "none": print(f"Error saving kline data to range cache {range_cache_file_path}: {e}")
 
     return combined_df
