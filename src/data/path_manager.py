@@ -33,13 +33,10 @@ def get_data_path_for_day(date_str: str, symbol: str, data_type: str = "agg_trad
         safe_filename = f"{filename_prefix}_{symbol}_{date_str}{resample_suffix}.parquet"
     elif data_type == "kline":
         if not interval: raise ValueError("Interval must be provided for kline data type.")
-        sorted_features_str = ""
         if price_features_to_add:
-            normalized_features_for_filename = sorted([re.sub(r'[^a-zA-Z0-9]', '', f).lower() for f in price_features_to_add])
-            sorted_features_str = "_".join(normalized_features_for_filename)
-            if sorted_features_str: sorted_features_str = f"_{sorted_features_str}"
+            ta_hash = _generate_data_config_hash_key({"price_features": price_features_to_add})
         filename_prefix = "bn_klines"
-        safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}{sorted_features_str}.parquet"
+        safe_filename = f"{filename_prefix}_{symbol}_{interval}_{date_str}_{ta_hash}.parquet"
         full_data_path = base_dir # kline data remains in data_type folder
     else:
         raise ValueError(f"Unsupported data_type: {data_type}. Must be 'agg_trades' or 'kline'.")
