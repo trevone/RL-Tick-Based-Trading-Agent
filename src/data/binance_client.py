@@ -18,23 +18,23 @@ except ImportError:
 def fetch_and_cache_kline_data(
     symbol: str, interval: str, start_date_str: str, end_date_str: str,
     cache_dir: str,
-    price_features_to_add: list = None,
+    price_features_to_add: dict = None,
     api_key: str = None, api_secret: str = None, testnet: bool = False,
     cache_file_type: str = "parquet", log_level: str = "normal",
     api_request_delay_seconds: float = 0.2, pbar_instance = None
 ) -> pd.DataFrame:
 
-    _print_fn = print # Changed: Always use print for logging
+    _print_fn = print
 
     if not BINANCE_CLIENT_AVAILABLE:
         _print_fn("CRITICAL ERROR in fetch_and_cache_kline_data: python-binance library not found.")
         return pd.DataFrame()
 
-    ta_features_for_filename = sorted([f for f in (price_features_to_add or []) if f not in ['Open', 'High', 'Low', 'Close', 'Volume']])
+    # The logic for creating the filename is now centralized in path_manager
     daily_file_date_str = pd.to_datetime(start_date_str, utc=True).strftime("%Y-%m-%d")
     cache_file = get_data_path_for_day(
         date_str=daily_file_date_str, symbol=symbol, data_type="kline",
-        interval=interval, price_features_to_add=ta_features_for_filename, cache_dir=cache_dir
+        interval=interval, price_features_to_add=price_features_to_add, cache_dir=cache_dir
     )
 
     os.makedirs(os.path.dirname(cache_file), exist_ok=True)
@@ -47,23 +47,27 @@ def fetch_and_cache_kline_data(
         try:
             df = pd.read_parquet(cache_file) if cache_file_type == "parquet" else pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if df.index.tz is None and not df.empty: df.index = df.index.tz_localize('UTC')
-            missing_tas = [ta for ta in ta_features_for_filename if ta not in df.columns]
+
+            feature_names = []
+            if price_features_to_add:
+                if isinstance(price_features_to_add, dict):
+                    feature_names = list(price_features_to_add.keys())
+                else:
+                    feature_names = price_features_to_add
+
+            missing_tas = [ta for ta in feature_names if ta not in df.columns]
             if missing_tas:
                 if log_level != "none": _print_fn(f"Warning: Cached K-line data {cache_file} missing TAs: {missing_tas}. Refetching for this day."); sys.stdout.flush()
-                if log_level == "detailed": _print_fn(f"DEBUG_KLINE_DAILY: Removing daily K-line cache due to missing TAs: {cache_file}"); sys.stdout.flush()
                 os.remove(cache_file)
             else:
                 if log_level == "detailed": _print_fn(f"DEBUG_KLINE_DAILY: Daily K-line cache HIT and valid: {cache_file}, Shape: {df.shape}"); sys.stdout.flush()
                 return df
         except Exception as e:
             if log_level != "none": _print_fn(f"Error loading K-line data from daily cache {cache_file}: {e}. Refetching for this day."); sys.stdout.flush()
-            if log_level == "detailed": _print_fn(f"DEBUG_KLINE_DAILY: Removing daily K-line cache due to load error: {cache_file}"); sys.stdout.flush()
             if os.path.exists(cache_file): os.remove(cache_file)
 
-    if log_level == "detailed":
-        _print_fn(f"DEBUG_KLINE_DAILY: Daily K-line cache MISS or invalid for: {cache_file}. Fetching from API."); sys.stdout.flush()
     if log_level in ["normal", "detailed"]:
-        _print_fn(f"Fetching K-line data for {symbol}, Interval: {interval}, Date: {daily_file_date_str} (API range: {start_date_str} to {end_date_str})"); sys.stdout.flush()
+        _print_fn(f"Fetching K-line data for {symbol}, Interval: {interval}, Date: {daily_file_date_str}"); sys.stdout.flush()
 
     client = Client(api_key or os.environ.get('BINANCE_API_KEY'),
                     api_secret or os.environ.get('BINANCE_API_SECRET'),
@@ -72,13 +76,20 @@ def fetch_and_cache_kline_data(
 
     try:
         klines_raw = client.get_historical_klines(symbol, interval, start_date_str, end_str=end_date_str)
+        
+        feature_names = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if price_features_to_add:
+            if isinstance(price_features_to_add, dict):
+                feature_names.extend([k for k in price_features_to_add.keys() if k not in feature_names])
+            else:
+                feature_names.extend([f for f in price_features_to_add if f not in feature_names])
+
         if not klines_raw:
-            if log_level != "none": _print_fn(f"No k-lines returned by API for {symbol} {start_date_str}-{end_date_str} (interval {interval})."); sys.stdout.flush()
-            empty_df = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_filename)
+            if log_level != "none": _print_fn(f"No k-lines returned by API for {symbol} {start_date_str}-{end_date_str}."); sys.stdout.flush()
+            empty_df = pd.DataFrame(columns=feature_names)
             empty_df.index = pd.to_datetime([]).tz_localize('UTC')
             if cache_file_type == "parquet": empty_df.to_parquet(cache_file)
             else: empty_df.to_csv(cache_file)
-            if log_level == "detailed": _print_fn(f"DEBUG_KLINE_DAILY: Saved empty daily K-line cache: {cache_file}"); sys.stdout.flush()
             return empty_df
 
         kline_cols = ['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QuoteAssetVolume',
@@ -89,25 +100,27 @@ def fetch_and_cache_kline_data(
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
         for col in numeric_cols:
             if col in df_fetched.columns: df_fetched[col] = pd.to_numeric(df_fetched[col], errors='coerce')
-        df_to_process = df_fetched[numeric_cols].copy()
-        df_to_process = df_to_process.astype(float)
-        df_with_ta = calculate_technical_indicators(df_to_process, price_features_to_add or [])
+        
+        df_to_process = df_fetched[numeric_cols].copy().astype(float)
+        
+        # Pass the dictionary directly to the feature engineer
+        df_with_ta = calculate_technical_indicators(df_to_process, price_features_to_add or {})
 
         if not df_with_ta.empty:
             try:
                 if cache_file_type == "parquet": df_with_ta.to_parquet(cache_file)
                 else: df_with_ta.to_csv(cache_file)
-                if log_level in ["normal", "detailed"]: _print_fn(f"Daily K-line data with TAs saved to cache: {cache_file}"); sys.stdout.flush()
-                if log_level == "detailed": _print_fn(f"DEBUG_KLINE_DAILY: Saved daily K-line data to cache: {cache_file}, Shape: {df_with_ta.shape}"); sys.stdout.flush()
+                if log_level in ["normal", "detailed"]: _print_fn(f"Daily K-line data saved to cache: {cache_file}"); sys.stdout.flush()
             except Exception as e: _print_fn(f"Error saving daily K-line data to cache {cache_file}: {e}"); sys.stdout.flush()
         return df_with_ta
+        
     except BinanceAPIException as bae:
-        _print_fn(f"Binance API Exception during K-line fetch for {daily_file_date_str}: Code={bae.code}, Message='{bae.message}'"); sys.stdout.flush()
-        return pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_filename).set_index(pd.to_datetime([]).tz_localize('UTC'))
+        _print_fn(f"Binance API Exception: Code={bae.code}, Message='{bae.message}'"); sys.stdout.flush()
     except Exception as e:
-        _print_fn(f"Unexpected error during K-line fetch/processing for {daily_file_date_str}: {e}"); sys.stdout.flush()
+        _print_fn(f"Unexpected error: {e}"); sys.stdout.flush()
         traceback.print_exc()
-        return pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'] + ta_features_for_filename).set_index(pd.to_datetime([]).tz_localize('UTC'))
+
+    return pd.DataFrame(columns=feature_names).set_index(pd.to_datetime([]).tz_localize('UTC'))
 
 def fetch_continuous_aggregate_trades(
     symbol: str, start_date_str: str, end_date_str: str,

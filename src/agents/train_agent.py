@@ -57,7 +57,9 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
 
     # 3. Load Data
     print("\n--- Preparing Data ---")
-    kline_df_train = load_kline_data_for_range(run_settings["default_symbol"], run_settings["start_date_train"], run_settings["end_date_train"], run_settings["historical_interval"], env_config["kline_price_features"], run_settings["historical_cache_dir"], config["binance_settings"])
+    kline_features_config = env_config.get("kline_price_features", {})
+    
+    kline_df_train = load_kline_data_for_range(run_settings["default_symbol"], run_settings["start_date_train"], run_settings["end_date_train"], run_settings["historical_interval"], kline_features_config, run_settings["historical_cache_dir"], config["binance_settings"])
     tick_df_train = load_tick_data_for_range(run_settings["default_symbol"], run_settings["start_date_train"], run_settings["end_date_train"], run_settings["historical_cache_dir"], config["binance_settings"], env_config.get("tick_resample_interval_ms"))
     if tick_df_train.empty: raise ValueError("Training tick data could not be loaded. Aborting.")
     print("Training data loaded successfully.")
@@ -84,7 +86,7 @@ def train_agent(config_override: dict = None, log_to_file: bool = True):
 
     # 5. Setup Evaluation Environment & Callback
     eval_callback = None
-    kline_df_eval = load_kline_data_for_range(run_settings["default_symbol"], run_settings["start_date_eval"], run_settings["end_date_eval"], run_settings["historical_interval"], env_config["kline_price_features"], run_settings["historical_cache_dir"], config["binance_settings"])
+    kline_df_eval = load_kline_data_for_range(run_settings["default_symbol"], run_settings["start_date_eval"], run_settings["end_date_eval"], run_settings["historical_interval"], kline_features_config, run_settings["historical_cache_dir"], config["binance_settings"])
     tick_df_eval = load_tick_data_for_range(run_settings["default_symbol"], run_settings["start_date_eval"], run_settings["end_date_eval"], run_settings["historical_cache_dir"], config["binance_settings"], env_config.get("tick_resample_interval_ms"))
     
     if not tick_df_eval.empty:

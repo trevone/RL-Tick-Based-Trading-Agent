@@ -28,12 +28,17 @@ environment:
   # --- General Environment Parameters ---
   kline_window_size: 20
   kline_price_features:
-    - "Open"
-    - "High"
-    - "Low"
-    - "Close"
-    - "Volume" 
-    - "RSI_7"
+    Open: {}
+    High: {}
+    Low: {}
+    Close: {}
+    Volume: {}
+    RSI_7: {
+      "function": "RSI",
+      "timeperiod": 20
+    }
+    # Example for a more complex indicator:
+    # SMA_20: {"period": 20}
 
   tick_feature_window_size: 10
   tick_features_to_use:
