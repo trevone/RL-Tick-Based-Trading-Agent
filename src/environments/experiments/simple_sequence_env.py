@@ -13,26 +13,28 @@ class SimpleSequenceEnv(SimpleTradingEnv):
         Implements the user-specified reward structure, but with a stronger
         penalty for holding while flat to ensure the agent learns to trade.
         """
+
+        reward_size = self.position_volume
         # --- State: FLAT (No position is open) ---
         if not self.position_open:
             if discrete_action == 1: # BUY
-                return 1.0  # Correct: Reward for buying
+                return reward_size # Correct: Reward for buying
             elif discrete_action == 2: # SELL
-                return -1.0 # Incorrect: Penalty for selling with no position
+                return -reward_size# Incorrect: Penalty for selling with no position
             else: # HOLD
                 # *** KEY CHANGE HERE ***
                 # Make the penalty for doing nothing much higher to force the agent
                 # to explore and find the +1.0 reward for buying.
-                return -0.25 
+                return -reward_size*0.1 
 
         # --- State: IN POSITION (A position is open) ---
         else:
             if discrete_action == 0: # HOLD
                 # A small positive reward for correctly holding the position.
-                return 0.1
+                return reward_size*0.1
             elif discrete_action == 1: # BUY
-                return -1.0 # Incorrect: Penalty for buying again
+                return -reward_size # Incorrect: Penalty for buying again
             else: # SELL
                 # Correct: Reward for selling to complete the sequence
                 pnl = (price_for_action - self.entry_price) * self.position_volume
-                return 1.0 + pnl
+                return reward_size + pnl
