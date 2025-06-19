@@ -28,26 +28,39 @@ environment:
 
 
   # --- General Environment Parameters ---
-  kline_window_size: 20
+  kline_window_size: 50
   kline_price_features:
     Open: {}
     High: {}
     Low: {}
     Close: {}
     Volume: {}
-    RSI_7: {
-      "function": "RSI",
-      "timeperiod": 7
-    }
+    RSI_14:
+      function: "RSI"
+      params:
+        timeperiod: 14
+    BBANDS_Upper:
+      function: "BBANDS"
+      params:
+        timeperiod: 20
+        nbdevup: 2
+        nbdevdn: 2
+      output_field: 0
+    BBANDS_Lower:
+      function: "BBANDS"
+      params:
+        timeperiod: 20
+        nbdevup: 2
+        nbdevdn: 2
+      output_field: 2
     # Example for a more complex indicator:
     # SMA_20: {"period": 20}
 
-  tick_feature_window_size: 10
-  tick_features_to_use:
-    - "Price"
-    - "Quantity"
-
-  tick_resample_interval_ms: 60000   
+  tick_feature_window_size: 15
+  live_ta_recalc_every_n_steps: 1
+ 
+  
+  tick_resample_interval_ms: 60000
 
 ppo_params:
   total_timesteps: 10000000
@@ -58,7 +71,9 @@ ppo_params:
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.03
+  # --- NEW: INCREASED EXPLORATION ---
+  # Forces the agent to try new things and break out of the cowardly loop.
+  ent_coef: 0.01
   vf_coef: 0.5
   max_grad_norm: 0.5
   target_kl: 0.02

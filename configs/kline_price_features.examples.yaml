@@ -1,0 +1,274 @@
+kline_price_features:
+    # --- Base OHLCV (Almost always required) ---
+    Open: {}
+    High: {}
+    Low: {}
+    Close: {}
+    Volume: {}
+
+    # --- Overlap Studies ---
+    SMA_10:
+      function: "SMA"
+      params:
+        timeperiod: 10
+
+    EMA_20:
+      function: "EMA"
+      params:
+        timeperiod: 20
+
+    WMA_30:
+      function: "WMA"
+      params:
+        timeperiod: 30
+
+    DEMA_14:
+      function: "DEMA"
+      params:
+        timeperiod: 14
+
+    TEMA_14:
+      function: "TEMA"
+      params:
+        timeperiod: 14
+
+    KAMA_14:
+      function: "KAMA"
+      params:
+        timeperiod: 14
+
+    SAR:
+      function: "SAR"
+      params:
+        acceleration: 0.02
+        maximum: 0.2
+
+    BBANDS_Upper:
+      function: "BBANDS"
+      params:
+        timeperiod: 20
+        nbdevup: 2
+        nbdevdn: 2
+      output_field: 0
+
+    BBANDS_Middle:
+      function: "BBANDS"
+      params:
+        timeperiod: 20
+        nbdevup: 2
+        nbdevdn: 2
+      output_field: 1
+
+    BBANDS_Lower:
+      function: "BBANDS"
+      params:
+        timeperiod: 20
+        nbdevup: 2
+        nbdevdn: 2
+      output_field: 2
+
+    # --- EMA on High prices ---
+    EMA_High_10:
+      function: "EMA"
+      params:
+        timeperiod: 10
+      data_source: "High" # Use the 'High' price as input for the EMA
+
+    # --- EMA on Low prices ---
+    EMA_Low_10:
+      function: "EMA"
+      params:
+        timeperiod: 10
+      data_source: "Low" # Use the 'Low' price as input for the EMA
+
+    # --- A standard EMA on Close prices (for comparison) ---
+    # Note: 'data_source' is not needed here as it defaults to "Close"
+    EMA_Close_10:
+      function: "EMA"
+      params:
+        timeperiod: 10
+
+    # --- Momentum Indicators ---
+    RSI_14:
+      function: "RSI"
+      params:
+        timeperiod: 14
+
+    ADX_14:
+      function: "ADX"
+      params:
+        timeperiod: 14
+
+    AROONOSC_14:
+      function: "AROONOSC"
+      params:
+        timeperiod: 14
+
+    CCI_14:
+      function: "CCI"
+      params:
+        timeperiod: 14
+
+    CMO_14:
+      function: "CMO"
+      params:
+        timeperiod: 14
+
+    MOM_10:
+      function: "MOM"
+      params:
+        timeperiod: 10
+
+    PPO:
+      function: "PPO"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        matype: 0
+
+    ROC_10:
+      function: "ROC"
+      params:
+        timeperiod: 10
+
+    WILLR_14:
+      function: "WILLR"
+      params:
+        timeperiod: 14
+
+    MACD_Line:
+      function: "MACD"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      output_field: 0
+
+    MACD_Signal:
+      function: "MACD"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      output_field: 1
+
+    MACD_Hist:
+      function: "MACD"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      output_field: 2
+
+    STOCH_SlowK:
+      function: "STOCH"
+      params:
+        fastk_period: 5
+        slowk_period: 3
+        slowk_matype: 0
+        slowd_period: 3
+        slowd_matype: 0
+      output_field: 0
+
+    STOCH_SlowD:
+      function: "STOCH"
+      params:
+        fastk_period: 5
+        slowk_period: 3
+        slowk_matype: 0
+        slowd_period: 3
+        slowd_matype: 0
+      output_field: 1
+
+    # --- Volume Indicators ---
+    AD:
+      function: "AD"
+      params: {}
+
+    ADOSC:
+      function: "ADOSC"
+      params:
+        fastperiod: 3
+        slowperiod: 10
+
+    OBV:
+      function: "OBV"
+      params: {}
+
+    # --- Volatility Indicators ---
+    ATR_14:
+      function: "ATR"
+      params:
+        timeperiod: 14
+
+    NATR_14:
+      function: "NATR"
+      params:
+        timeperiod: 14
+
+    TRANGE:
+      function: "TRANGE"
+      params: {}
+      
+    # --- Candlestick Patterns (no params needed) ---
+    CDL2CROWS: { function: "CDL2CROWS" }
+    CDL3BLACKCROWS: { function: "CDL3BLACKCROWS" }
+    CDL3INSIDE: { function: "CDL3INSIDE" }
+    CDL3LINESTRIKE: { function: "CDL3LINESTRIKE" }
+    CDL3OUTSIDE: { function: "CDL3OUTSIDE" }
+    CDL3STARSINSOUTH: { function: "CDL3STARSINSOUTH" }
+    CDL3WHITESOLDIERS: { function: "CDL3WHITESOLDIERS" }
+    CDLABANDONEDBABY: { function: "CDLABANDONEDBABY" }
+    CDLADVANCEBLOCK: { function: "CDLADVANCEBLOCK" }
+    CDLBELTHOLD: { function: "CDLBELTHOLD" }
+    CDLBREAKAWAY: { function: "CDLBREAKAWAY" }
+    CDLCLOSINGMARUBOZU: { function: "CDLCLOSINGMARUBOZU" }
+    CDLCONCEALBABYSWALL: { function: "CDLCONCEALBABYSWALL" }
+    CDLCOUNTERATTACK: { function: "CDLCOUNTERATTACK" }
+    CDLDARKCLOUDCOVER: { function: "CDLDARKCLOUDCOVER" }
+    CDLDOJI: { function: "CDLDOJI" }
+    CDLDOJISTAR: { function: "CDLDOJISTAR" }
+    CDLDRAGONFLYDOJI: { function: "CDLDRAGONFLYDOJI" }
+    CDLENGULFING: { function: "CDLENGULFING" }
+    CDLEVENINGDOJISTAR: { function: "CDLEVENINGDOJISTAR" }
+    CDLEVENINGSTAR: { function: "CDLEVENINGSTAR" }
+    CDLGAPSIDESIDEWHITE: { function: "CDLGAPSIDESIDEWHITE" }
+    CDLGRAVESTONEDOJI: { function: "CDLGRAVESTONEDOJI" }
+    CDLHAMMER: { function: "CDLHAMMER" }
+    CDLHANGINGMAN: { function: "CDLHANGINGMAN" }
+    CDLHARAMI: { function: "CDLHARAMI" }
+    CDLHARAMICROSS: { function: "CDLHARAMICROSS" }
+    CDLHIGHWAVE: { function: "CDLHIGHWAVE" }
+    CDLHIKKAKE: { function: "CDLHIKKAKE" }
+    CDLHIKKAKEMOD: { function: "CDLHIKKAKEMOD" }
+    CDLHOMINGPIGEON: { function: "CDLHOMINGPIGEON" }
+    CDLIDENTICAL3CROWS: { function: "CDLIDENTICAL3CROWS" }
+    CDLINNECK: { function: "CDLINNECK" }
+    CDLINVERTEDHAMMER: { function: "CDLINVERTEDHAMMER" }
+    CDLKICKING: { function: "CDLKICKING" }
+    CDLKICKINGBYLENGTH: { function: "CDLKICKINGBYLENGTH" }
+    CDLLADDERBOTTOM: { function: "CDLLADDERBOTTOM" }
+    CDLLONGLEGGEDDOJI: { function: "CDLLONGLEGGEDDOJI" }
+    CDLLONGLINE: { function: "CDLLONGLINE" }
+    CDLMARUBOZU: { function: "CDLMARUBOZU" }
+    CDLMATCHINGLOW: { function: "CDLMATCHINGLOW" }
+    CDLMATHOLD: { function: "CDLMATHOLD" }
+    CDLMORNINGDOJISTAR: { function: "CDLMORNINGDOJISTAR" }
+    CDLMORNINGSTAR: { function: "CDLMORNINGSTAR" }
+    CDLONNECK: { function: "CDLONNECK" }
+    CDLPIERCING: { function: "CDLPIERCING" }
+    CDLRICKSHAWMAN: { function: "CDLRICKSHAWMAN" }
+    CDLRISEFALL3METHODS: { function: "CDLRISEFALL3METHODS" }
+    CDLSEPARATINGLINES: { function: "CDLSEPARATINGLINES" }
+    CDLSHOOTINGSTAR: { function: "CDLSHOOTINGSTAR" }
+    CDLSHORTLINE: { function: "CDLSHORTLINE" }
+    CDLSPINNINGTOP: { function: "CDLSPINNINGTOP" }
+    CDLSTALLEDPATTERN: { function: "CDLSTALLEDPATTERN" }
+    CDLSTICKSANDWICH: { function: "CDLSTICKSANDWICH" }
+    CDLTAKURI: { function: "CDLTAKURI" }
+    CDLTASUKIGAP: { function: "CDLTASUKIGAP" }
+    CDLTHRUSTING: { function: "CDLTHRUSTING" }
+    CDLTRISTAR: { function: "CDLTRISTAR" }
+    CDLUNIQUE3RIVER: { function: "CDLUNIQUE3RIVER" }
+    CDLUPSIDEGAP2CROWS: { function: "CDLUPSIDEGAP2CROWS" }
+    CDLXSIDEGAP3METHODS: { function: "CDLXSIDEGAP3METHODS" }

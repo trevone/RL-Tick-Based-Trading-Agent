@@ -1,8 +1,9 @@
 # src/data/feature_engineer.py
 import pandas as pd
 import numpy as np
-import re
 from typing import Dict
+
+from .custom_indicators import get_custom_indicator_calculators
 
 try:
     import talib
@@ -12,28 +13,10 @@ except ImportError:
     print("WARNING: TA-Lib not found. Technical indicators will not be calculated. "
           "Please install with 'pip install TA-Lib' for full functionality.")
 
-def get_indicator_calculators(high_np, low_np, close_np, open_np, volume_np):
-    """
-    Returns a dictionary mapping indicator names to their calculation functions.
-    """
-    if not TALIB_AVAILABLE:
-        return {}
-    return {
-        'SMA': lambda **params: talib.SMA(close_np, **params),
-        'EMA': lambda **params: talib.EMA(close_np, **params),
-        'RSI': lambda **params: talib.RSI(close_np, **params),
-        'MACD': lambda **params: talib.MACD(close_np, **params),
-        'ADX': lambda **params: talib.ADX(high_np, low_np, close_np, **params),
-        'STOCH': lambda **params: talib.STOCH(high_np, low_np, close_np, **params),
-        'ATR': lambda **params: talib.ATR(high_np, low_np, close_np, **params),
-        'BBANDS': lambda **params: talib.BBANDS(close_np, **params),
-        'AD': lambda **params: talib.AD(high_np, low_np, close_np, volume_np),
-        'OBV': lambda **params: talib.OBV(close_np, volume_np),
-    }
-
 def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: Dict) -> pd.DataFrame:
     """
     Calculates technical indicators on a DataFrame, enforcing the new dictionary format.
+    This version dynamically selects the data source (High, Low, Close, etc.) based on the config.
     """
     df_processed = df.copy()
     required_cols_for_ta = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -56,60 +39,75 @@ def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: Dict
     if df_processed.empty:
         return df_processed
 
-    high_np = df_processed['High'].values.astype(float)
-    low_np = df_processed['Low'].values.astype(float)
-    close_np = df_processed['Close'].values.astype(float)
-    open_np = df_processed['Open'].values.astype(float)
-    volume_np = df_processed['Volume'].values.astype(float)
-
-    indicator_calculators = get_indicator_calculators(high_np, low_np, close_np, open_np, volume_np)
+    # --- Data source mapping ---
+    data_sources = {
+        'High': df_processed['High'].values.astype(float),
+        'Low': df_processed['Low'].values.astype(float),
+        'Close': df_processed['Close'].values.astype(float),
+        'Open': df_processed['Open'].values.astype(float),
+        'Volume': df_processed['Volume'].values.astype(float),
+    }
+    
+    # Get custom calculator functions
+    custom_calculators = get_custom_indicator_calculators()
 
     for feature_name, feature_config in price_features_to_add.items():
         if feature_name in required_cols_for_ta:
             continue
         
-        # 1. Parse the base indicator name (e.g., "RSI" from "RSI_7")
-        # indicator_name_match = re.match(r"([A-Z]+)", feature_name)
-        # if not indicator_name_match:
-        #     print(f"Warning: Could not determine base indicator for '{feature_name}'. Skipping.")
-        #     continue
-        # indicator_name = indicator_name_match.group(1)
-        
         try:
             params = feature_config.get('params', {}).copy()
             indicator_name = feature_config.get('function', '')
+            
+            # Default to 'Close' if data_source is not specified
+            data_source_key = feature_config.get('data_source', 'Close')
+            input_data = data_sources.get(data_source_key)
 
-            # 2. Intelligently add 'timeperiod' from name if not specified in params
-            # timeperiod_indicators = ['SMA', 'EMA', 'RSI', 'ADX', 'ATR']
-            # if indicator_name in timeperiod_indicators and 'timeperiod' not in params:
-            #     period_match = re.search(r'_(\d+)', feature_name)
-            #     if period_match:
-            #         params['timeperiod'] = int(period_match.group(1))
+            if input_data is None:
+                print(f"Warning: Data source '{data_source_key}' not found for feature '{feature_name}'. Skipping.")
+                continue
 
-            calculator_func = indicator_calculators.get(indicator_name)
+            result = None
+            
+            # --- Dynamic Calculator Logic ---
+            if indicator_name in custom_calculators:
+                # 1. It's a custom indicator
+                calculator_func = custom_calculators[indicator_name]
+                result = calculator_func(input_data, **params)
+            elif indicator_name.startswith('CDL'):
+                # 2. It's a candlestick pattern (which have a fixed input signature)
+                if hasattr(talib, indicator_name):
+                    pattern_func = getattr(talib, indicator_name)
+                    result = pattern_func(data_sources['Open'], data_sources['High'], data_sources['Low'], data_sources['Close'])
+                else:
+                    print(f"Warning: Candlestick pattern '{indicator_name}' not found. Skipping.")
+            elif hasattr(talib, indicator_name):
+                # 3. It's a standard TA-Lib indicator
+                calculator_func = getattr(talib, indicator_name)
+                
+                # Special handling for indicators with multiple inputs (e.g., AD, OBV)
+                # These will be hardcoded for now as they are exceptions.
+                if indicator_name in ['AD', 'ADOSC']:
+                    result = calculator_func(data_sources['High'], data_sources['Low'], data_sources['Close'], data_sources['Volume'], **params)
+                elif indicator_name == 'OBV':
+                    result = calculator_func(data_sources['Close'], data_sources['Volume'], **params)
+                else:
+                    result = calculator_func(input_data, **params)
+            elif indicator_name:
+                print(f"Warning: Indicator '{indicator_name}' is not defined. Skipping.")
 
-            if calculator_func:
-                result = calculator_func(**params)
+            # --- Process and store the result ---
+            if result is not None:
                 if isinstance(result, tuple):
                     output_field = feature_config.get('output_field', 0)
                     df_processed[feature_name] = result[output_field]
                 else:
                     df_processed[feature_name] = result
-            elif indicator_name.startswith('CDL'):
-                if hasattr(talib, indicator_name):
-                    pattern_func = getattr(talib, indicator_name)
-                    df_processed[feature_name] = pattern_func(open_np, high_np, low_np, close_np)
-                else:
-                    print(f"Warning: Candlestick pattern '{indicator_name}' not found. Skipping.")
-            else:
-                print(f"Warning: Indicator '{indicator_name}' is not defined in the calculator. Skipping.")
 
         except Exception as e:
             print(f"Error calculating '{feature_name}' (Indicator: '{indicator_name}', Params: {params}): {e}. Skipping.")
             df_processed[feature_name] = np.nan
 
-    # --- FIXED ---
-    # Chained inplace operations return None. They must be on separate lines.
     df_processed.bfill(inplace=True)
     df_processed.ffill(inplace=True)
     df_processed.fillna(0, inplace=True)
