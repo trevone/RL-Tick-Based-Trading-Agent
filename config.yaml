@@ -7,23 +7,25 @@ binance_settings:
 
 run_settings:
   log_level: "normal"
-  model_name: "profit_driven_env"
+  model_name: "hybrid_reward_env"
   # Set to false if you want to start a completely new model training session
   continue_from_existing_model: true
   default_symbol: "BTCUSDT"
   historical_interval: "1h"
-  start_date_train: "2025-01-01 00:00:00"
-  end_date_train: "2025-03-01 23:59:59"
-  start_date_eval: "2025-03-06 00:00:00"
-  end_date_eval: "2025-03-17 23:59:59"
+  start_date_train: "2024-12-01 00:00:00"
+  end_date_train: "2025-05-01 23:59:59"
+  start_date_eval: "2025-04-21 00:00:00"
+  end_date_eval: "2025-06-01 23:59:59"
   eval_freq_episodes: 1
   stop_training_patience_evals: 5
 
 environment:
-  env_type: "profit_driven_env"
+  env_type: "hybrid_reward_env"
   # --- Parameters for the HybridRewardEnv ---
   reward_at_entry: 1.0  # The maximum reward for holding at the entry price
   decay_rate: 0.1       # Controls how quickly the hold reward decreases
+
+
 
   # --- General Environment Parameters ---
   kline_window_size: 20
@@ -35,7 +37,7 @@ environment:
     Volume: {}
     RSI_7: {
       "function": "RSI",
-      "timeperiod": 20
+      "timeperiod": 7
     }
     # Example for a more complex indicator:
     # SMA_20: {"period": 20}
@@ -48,7 +50,7 @@ environment:
   tick_resample_interval_ms: 60000   
 
 ppo_params:
-  total_timesteps: 1000000
+  total_timesteps: 10000000
   learning_rate: 0.0003
   n_steps: 4096
   batch_size: 128

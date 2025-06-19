@@ -56,7 +56,7 @@ def main():
     run_settings = config["run_settings"]
     binance_settings = config["binance_settings"]
     agent_type = config.get("agent_type", "PPO")
-    env_type = run_settings.get("env_type", "simple")
+    env_type = env_config.get("env_type", "simple")
     
     # 4. Load Evaluation Data
     kline_df = load_kline_data_for_range(run_settings["default_symbol"], run_settings["start_date_eval"], run_settings["end_date_eval"], run_settings["historical_interval"], env_config["kline_price_features"], run_settings["historical_cache_dir"], binance_settings, 'none')

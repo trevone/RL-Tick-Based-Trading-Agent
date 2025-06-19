@@ -160,10 +160,11 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
     print(f"--- Managing AGGREGATE TRADES ---")
     print(f"Using cache directory: {os.path.abspath(historical_cache_dir)}")
     
-    current_date = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
-    end_date = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
+    # start with most recent day and work backwards
+    current_date = datetime.strptime(end_date_str_arg, '%Y-%m-%d').date()
+    end_date = datetime.strptime(start_date_str_arg, '%Y-%m-%d').date()
     
-    while current_date <= end_date:
+    while current_date >= end_date:
         date_str = current_date.strftime('%Y-%m-%d')
         day_start_dt_utc = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.utc)
         day_end_dt_utc = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.utc)
@@ -187,7 +188,7 @@ def download_and_manage_data(start_date_str_arg: str, end_date_str_arg: str, sym
             fetch_function=fetch_and_cache_tick_data,
             fetch_function_kwargs=fetch_kwargs
         )
-        current_date += timedelta(days=1)
+        current_date -= timedelta(days=1)
     print("\nAggregate trades data management process completed.")
 
 def download_and_manage_kline_data(start_date_str_arg: str, end_date_str_arg: str, symbol: str, interval: str, price_features_to_add: list):

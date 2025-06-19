@@ -21,7 +21,7 @@ def fetch_and_cache_kline_data(
     price_features_to_add: dict = None,
     api_key: str = None, api_secret: str = None, testnet: bool = False,
     cache_file_type: str = "parquet", log_level: str = "normal",
-    api_request_delay_seconds: float = 0.2, pbar_instance = None
+    api_request_delay_seconds: float = 0.1, pbar_instance = None
 ) -> pd.DataFrame:
 
     _print_fn = print
@@ -126,7 +126,7 @@ def fetch_continuous_aggregate_trades(
     symbol: str, start_date_str: str, end_date_str: str,
     cache_dir: str, api_key: str = None, api_secret: str = None,
     testnet: bool = False, cache_file_type: str = "parquet", log_level: str = "normal",
-    api_request_delay_seconds: float = 0.2, pbar_instance = None
+    api_request_delay_seconds: float = 0.1, pbar_instance = None
 ) -> pd.DataFrame:
 
     _print_fn = print # Changed: Always use print for logging
