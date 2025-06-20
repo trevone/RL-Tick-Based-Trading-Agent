@@ -4,6 +4,7 @@ from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import re
+from typing import Dict
 
 # We need the feature calculation function to run it dynamically
 from src.data.feature_engineer import calculate_technical_indicators, TALIB_AVAILABLE
@@ -16,31 +17,26 @@ DEFAULT_ENV_CONFIG = {
     "initial_balance": 10000.0, "commission_pct": 0.001,
     "base_trade_amount_ratio": 0.02, "catastrophic_loss_threshold_pct": 0.3,
     "penalty_catastrophic_loss": -100.0,
-    "live_ta_recalc_every_n_steps": 1, # Default to update every step
-    # --- Default reward/penalty values for the base environment ---
-    "reward_correct_buy": 0.5,
-    "reward_correct_sell_profit": 1.0,
-    "penalty_incorrect_action": -1.0,
-    "penalty_hold_flat": -0.01,
-    "penalty_hold_losing": -0.05,
-    "reward_hold_profit": 0.02,
+    "live_ta_recalc_every_n_steps": 1,
 }
-
-# --- HELPER FUNCTION TO PARSE TA PERIODS ---
-def _get_max_ta_period(feature_names: list) -> int:
-    max_period = 0
-    for name in feature_names:
-        parts = re.split('_|-', name)
-        for part in parts:
-            if part.isdigit():
-                max_period = max(max_period, int(part))
-    if any(f in ['MACD', 'ADX', 'STOCH_K', 'ATR'] for f in feature_names):
-        max_period = max(max_period, 26)
-    return max(1, max_period)
 
 class SimpleTradingEnv(gym.Env):
     metadata = {'render_modes': ['human']}
     ACTION_MAP = {0: "Hold", 1: "Buy", 2: "Sell"}
+
+    @staticmethod
+    def _calculate_max_ta_period(kline_price_features: dict) -> int:
+        """
+        Calculates the maximum 'period' from the TA feature configurations.
+        This is more robust than parsing feature names.
+        """
+        max_period = 0
+        for feature_config in kline_price_features.values():
+            if 'params' in feature_config and isinstance(feature_config['params'], dict):
+                for param_name, param_value in feature_config['params'].items():
+                    if 'period' in param_name.lower() and isinstance(param_value, int):
+                        max_period = max(max_period, param_value)
+        return max(1, max_period)
 
     def __init__(self, tick_df: pd.DataFrame, kline_df_with_ta: pd.DataFrame, config: dict = None):
         super().__init__()
@@ -50,7 +46,7 @@ class SimpleTradingEnv(gym.Env):
         self.tick_df = tick_df.copy()
         self.raw_kline_df = kline_df_with_ta[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
         self.kline_df_with_ta = kline_df_with_ta.copy()
-        
+
         if not self.kline_df_with_ta.empty:
             if not isinstance(self.kline_df_with_ta.index, pd.DatetimeIndex): self.kline_df_with_ta.index = pd.to_datetime(self.kline_df_with_ta.index)
             if not self.kline_df_with_ta.index.is_monotonic_increasing: self.kline_df_with_ta.sort_index(inplace=True)
@@ -59,13 +55,12 @@ class SimpleTradingEnv(gym.Env):
         self.commission_pct = float(self.config["commission_pct"])
         self.base_trade_amount_ratio = float(self.config["base_trade_amount_ratio"])
         self.catastrophic_loss_limit = self.initial_balance * (1.0 - float(self.config["catastrophic_loss_threshold_pct"]))
-        
-        # --- PERFORMANCE OPTIMIZATION ---
+
         self.live_ta_recalc_interval = int(self.config.get("live_ta_recalc_every_n_steps", 1))
-        self.last_live_ta_values = {}  # Cache for the last calculated live TA values
+        self.last_live_ta_values = {}
 
         self.action_space = spaces.Tuple((spaces.Discrete(3), spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)))
-        
+
         self.tick_feature_window_size = int(self.config["tick_feature_window_size"])
         self.kline_window_size = int(self.config["kline_window_size"])
         obs_shape_dim = (self.tick_feature_window_size * len(self.config["tick_features_to_use"])) + \
@@ -80,17 +75,33 @@ class SimpleTradingEnv(gym.Env):
         self.tick_df.sort_index(inplace=True)
         self.tick_price_data = {name: self.tick_df[name].values.astype(np.float32) for name in self.config["tick_features_to_use"]}
         self.decision_prices = self.tick_price_data['Price']
-        
-        self.max_ta_period = _get_max_ta_period(self.config["kline_price_features"])
-        self.kline_feature_arrays = {name: self.kline_df_with_ta[name].values.astype(np.float32) for name in self.config["kline_price_features"] if name in self.kline_df_with_ta}
-        
+
+        self.kline_feature_names = list(self.config["kline_price_features"].keys())
+        self.kline_feature_name_to_idx = {name: i for i, name in enumerate(self.kline_feature_names)}
+        self.all_kline_data_2d = np.stack(
+            [self.kline_df_with_ta[name].values for name in self.kline_feature_names],
+            axis=1
+        ).astype(np.float32)
+
+        self.max_ta_period = SimpleTradingEnv._calculate_max_ta_period(self.config["kline_price_features"])
+
+        # --- AUTOMATED BUFFER ---
+        # The buffer is set dynamically to the max_ta_period, ensuring a minimum of 2x the period for calculation stability.
+        self.live_ta_recalc_buffer = self.max_ta_period
+
+        if self.kline_window_size <= self.max_ta_period:
+            raise ValueError(
+                f"Configuration Error: kline_window_size ({self.kline_window_size}) must be "
+                f"greater than the maximum TA indicator period ({self.max_ta_period})."
+            )
+
         self.end_step = len(self.tick_df) - 1
         min_start_step = self.tick_feature_window_size - 1
 
         if not self.kline_df_with_ta.empty and len(self.kline_df_with_ta) >= self.kline_window_size:
             first_valid_kline_timestamp = self.kline_df_with_ta.index[self.kline_window_size - 1]
             tick_indexer = self.tick_df.index.get_indexer([first_valid_kline_timestamp], method='bfill')
-            
+
             if tick_indexer[0] != -1:
                 kline_start_buffer = tick_indexer[0]
                 self.start_step = max(min_start_step, kline_start_buffer)
@@ -98,7 +109,7 @@ class SimpleTradingEnv(gym.Env):
                 self.start_step = self.end_step
         else:
             self.start_step = self.end_step
-        
+
         if self.start_step >= self.end_step:
             raise ValueError("Not enough data to create a full observation window. Check data alignment and length.")
 
@@ -115,48 +126,35 @@ class SimpleTradingEnv(gym.Env):
             tick_features_list.append(arr)
         tick_features = np.concatenate(tick_features_list)
 
-        kline_features = np.zeros(self.kline_window_size * len(self.config["kline_price_features"]), dtype=np.float32)
+        kline_features = np.zeros(self.kline_window_size * len(self.kline_feature_names), dtype=np.float32)
         if not self.kline_df_with_ta.empty:
             kline_indexer = self.kline_df_with_ta.index.get_indexer([self.tick_df.index[safe_step]], method='ffill')
             if kline_indexer[0] != -1:
                 kline_idx = kline_indexer[0]
                 kline_start_idx = kline_idx - self.kline_window_size + 1
-                
-                window_features = {name: arr[kline_start_idx:kline_idx + 1].copy() for name, arr in self.kline_feature_arrays.items()}
-                
-                # --- ALWAYS UPDATE LIVE CLOSE PRICE ---
-                if 'Close' in window_features:
-                    window_features['Close'][-1] = current_tick_price
-                
-                # --- PERIODICALLY UPDATE LIVE TA INDICATORS ---
+                kline_observation_2d = self.all_kline_data_2d[kline_start_idx:kline_idx + 1].copy()
+
+                close_idx = self.kline_feature_name_to_idx.get('Close')
+                if close_idx is not None:
+                    kline_observation_2d[-1, close_idx] = current_tick_price
+
                 if TALIB_AVAILABLE and self.max_ta_period > 1:
                     if self.current_step % self.live_ta_recalc_interval == 0:
-                        buffer = 26 
-                        recalc_start_idx = max(0, kline_idx - (self.max_ta_period + buffer) + 1)
-                        
+                        recalc_start_idx = max(0, kline_idx - (self.max_ta_period + self.live_ta_recalc_buffer) + 1)
                         live_recalc_window_df = self.raw_kline_df.iloc[recalc_start_idx:kline_idx + 1].copy()
                         live_recalc_window_df.iloc[-1, live_recalc_window_df.columns.get_loc('Close')] = current_tick_price
-
-                        live_ta_values_df = calculate_technical_indicators(
-                            live_recalc_window_df, self.config["kline_price_features"]
-                        )
+                        live_ta_values_df = calculate_technical_indicators(live_recalc_window_df, self.config["kline_price_features"])
                         self.last_live_ta_values = live_ta_values_df.iloc[-1].to_dict()
 
-                    # Always inject the most recently calculated live TA values
                     for name, value in self.last_live_ta_values.items():
-                        if name in window_features:
-                            window_features[name][-1] = value
+                        feature_idx = self.kline_feature_name_to_idx.get(name)
+                        if feature_idx is not None:
+                            kline_observation_2d[-1, feature_idx] = value
 
-                kline_features_list = []
-                for name in self.config["kline_price_features"]:
-                    arr = window_features.get(name, np.zeros(self.kline_window_size))
-                    padding = self.kline_window_size - len(arr)
-                    if padding > 0: arr = np.concatenate((np.full(padding, arr[0] if len(arr) > 0 else 0), arr))
-                    kline_features_list.append(arr)
-                kline_features = np.concatenate(kline_features_list)
+                kline_features = kline_observation_2d.flatten()
 
         portfolio_state = np.array([1.0 if self.position_open else 0.0, (self.entry_price / current_tick_price - 1) if self.position_open and current_tick_price > 1e-9 else 0.0, ((current_tick_price - self.entry_price) * self.position_volume) / self.initial_balance if self.position_open else 0.0], dtype=np.float32)
-        
+
         return np.concatenate([tick_features, kline_features, portfolio_state])
 
     def _get_info(self) -> dict:
@@ -172,24 +170,18 @@ class SimpleTradingEnv(gym.Env):
         self.trade_start_step = 0
         self.last_price = 0.0
         self.current_step = self.start_step
-        self.last_live_ta_values = {} # Reset the TA cache
+        self.last_live_ta_values = {}
         return self._get_observation(), self._get_info()
-    
+
     def _calculate_reward(self, discrete_action, price_for_action):
-        if discrete_action == 1:
-            return self.config["reward_correct_buy"] if not self.position_open else self.config["penalty_incorrect_action"]
-        elif discrete_action == 2:
-            if not self.position_open:
-                return self.config["penalty_incorrect_action"]
-            else:
-                pnl = (price_for_action - self.entry_price) * self.position_volume
-                return self.config["reward_correct_sell_profit"] + pnl
-        else:
-            if not self.position_open:
-                return self.config["penalty_hold_flat"]
-            else:
-                is_losing = price_for_action < self.entry_price
-                return self.config["penalty_hold_losing"] if is_losing else self.config["reward_hold_profit"]
+        """
+        This method is intended to be overridden by subclasses.
+        The base environment does not have a specific reward structure.
+        """
+        # --- REFACTOR: ABSTRACT REWARD CALCULATION ---
+        # The original implementation has been removed.
+        # Subclasses must now provide their own reward logic.
+        raise NotImplementedError("Reward calculation must be implemented in a subclass.")
 
     def step(self, action_tuple):
         discrete_action, _ = action_tuple
@@ -205,13 +197,13 @@ class SimpleTradingEnv(gym.Env):
                 self.current_balance -= cost
                 self.position_open, self.entry_price = True, price
                 self.trade_start_step = self.current_step
-        
+
         elif discrete_action == 2 and self.position_open:
             revenue = self.position_volume * price * (1 - self.commission_pct)
             self.current_balance += revenue
             self.position_open, self.position_volume, self.entry_price = False, 0.0, 0.0
             self.trade_start_step = 0
-       
+
         self.current_step += 1
         current_equity = self.current_balance + (self.position_volume * price if self.position_open else 0)
 
@@ -221,7 +213,7 @@ class SimpleTradingEnv(gym.Env):
 
         if self.current_step > self.end_step:
             truncated = True
-        
+
         if (terminated or truncated) and self.position_open:
             self.current_balance += self.position_volume * price * (1 - self.commission_pct)
             self.position_open = False
@@ -230,4 +222,5 @@ class SimpleTradingEnv(gym.Env):
 
         return self._get_observation(), reward, terminated, truncated, self._get_info()
 
-    def close(self): pass
+    def close(self):
+        pass

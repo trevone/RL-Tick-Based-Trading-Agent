@@ -39,7 +39,6 @@ def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: Dict
     if df_processed.empty:
         return df_processed
 
-    # --- Data source mapping ---
     data_sources = {
         'High': df_processed['High'].values.astype(float),
         'Low': df_processed['Low'].values.astype(float),
@@ -48,7 +47,6 @@ def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: Dict
         'Volume': df_processed['Volume'].values.astype(float),
     }
     
-    # Get custom calculator functions
     custom_calculators = get_custom_indicator_calculators()
 
     for feature_name, feature_config in price_features_to_add.items():
@@ -58,8 +56,7 @@ def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: Dict
         try:
             params = feature_config.get('params', {}).copy()
             indicator_name = feature_config.get('function', '')
-            
-            # Default to 'Close' if data_source is not specified
+
             data_source_key = feature_config.get('data_source', 'Close')
             input_data = data_sources.get(data_source_key)
 
@@ -69,34 +66,28 @@ def calculate_technical_indicators(df: pd.DataFrame, price_features_to_add: Dict
 
             result = None
             
-            # --- Dynamic Calculator Logic ---
             if indicator_name in custom_calculators:
-                # 1. It's a custom indicator
                 calculator_func = custom_calculators[indicator_name]
                 result = calculator_func(input_data, **params)
             elif indicator_name.startswith('CDL'):
-                # 2. It's a candlestick pattern (which have a fixed input signature)
                 if hasattr(talib, indicator_name):
                     pattern_func = getattr(talib, indicator_name)
                     result = pattern_func(data_sources['Open'], data_sources['High'], data_sources['Low'], data_sources['Close'])
                 else:
                     print(f"Warning: Candlestick pattern '{indicator_name}' not found. Skipping.")
             elif hasattr(talib, indicator_name):
-                # 3. It's a standard TA-Lib indicator
                 calculator_func = getattr(talib, indicator_name)
-                
-                # Special handling for indicators with multiple inputs (e.g., AD, OBV)
-                # These will be hardcoded for now as they are exceptions.
+
                 if indicator_name in ['AD', 'ADOSC']:
                     result = calculator_func(data_sources['High'], data_sources['Low'], data_sources['Close'], data_sources['Volume'], **params)
                 elif indicator_name == 'OBV':
                     result = calculator_func(data_sources['Close'], data_sources['Volume'], **params)
                 else:
                     result = calculator_func(input_data, **params)
+
             elif indicator_name:
                 print(f"Warning: Indicator '{indicator_name}' is not defined. Skipping.")
 
-            # --- Process and store the result ---
             if result is not None:
                 if isinstance(result, tuple):
                     output_field = feature_config.get('output_field', 0)
