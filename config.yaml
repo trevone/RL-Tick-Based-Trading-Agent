@@ -13,8 +13,8 @@ run_settings:
   default_symbol: "BTCUSDT"
   historical_interval: "1h"
   start_date_train: "2024-11-06 00:00:00"
-  end_date_train: "2025-05-21 23:59:59"
-  start_date_eval: "2025-05-22 00:00:00"
+  end_date_train: "2025-04-21 23:59:59"
+  start_date_eval: "2025-04-22 00:00:00"
   end_date_eval: "2025-06-17 23:59:59"
   eval_freq_episodes: 1
   stop_training_patience_evals: 5
@@ -28,34 +28,26 @@ environment:
 
 
   # --- General Environment Parameters ---
-  kline_window_size: 20
+  kline_window_size: 50
   kline_price_features:
     Open: {}
     High: {}
     Low: {}
     Close: {}
     Volume: {}
-    EMA_High_3:
+    EMA_High_10:
       function: "EMA"
       params:
         timeperiod: 3
       data_source: "High"
-    EMA_Low_3:
+    EMA_Low_10:
       function: "EMA"
       params:
         timeperiod: 3
       data_source: "Low"
-    RSI_7:
-      function: "RSI"
-      params:
-        timeperiod: 7
 
-  tick_feature_window_size: 1
-  tick_features_to_use:
-    - "Price"
-    #- "Quantity"
-
-  live_ta_recalc_every_n_steps: 15
+  tick_feature_window_size: 15
+  live_ta_recalc_every_n_steps: 1
  
   
   tick_resample_interval_ms: 60000
