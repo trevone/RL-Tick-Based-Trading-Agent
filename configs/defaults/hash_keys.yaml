@@ -2,15 +2,13 @@
 hash_config_keys:
   # Keys from the 'run_settings' section to include in the run hash.
   run_settings:
-    - env_type
     - default_symbol
     - historical_interval
-    - start_date_train
-    - end_date_train
 
   # Keys from the 'environment' section to include in the run hash.
   # Changing any of these parameters will result in a new hash and a new log directory.
   environment:
+    - env_type
     - kline_window_size
     - kline_price_features
     - tick_feature_window_size

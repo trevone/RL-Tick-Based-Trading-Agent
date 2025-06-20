@@ -35,26 +35,16 @@ environment:
     Low: {}
     Close: {}
     Volume: {}
-    RSI_14:
-      function: "RSI"
+    EMA_High_10:
+      function: "EMA"
       params:
-        timeperiod: 14
-    BBANDS_Upper:
-      function: "BBANDS"
+        timeperiod: 3
+      data_source: "High"
+    EMA_Low_10:
+      function: "EMA"
       params:
-        timeperiod: 20
-        nbdevup: 2
-        nbdevdn: 2
-      output_field: 0
-    BBANDS_Lower:
-      function: "BBANDS"
-      params:
-        timeperiod: 20
-        nbdevup: 2
-        nbdevdn: 2
-      output_field: 2
-    # Example for a more complex indicator:
-    # SMA_20: {"period": 20}
+        timeperiod: 3
+      data_source: "Low"
 
   tick_feature_window_size: 15
   live_ta_recalc_every_n_steps: 1

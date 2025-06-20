@@ -128,24 +128,24 @@ class SimpleTradingEnv(gym.Env):
                 if 'Close' in window_features:
                     window_features['Close'][-1] = current_tick_price
                 
-                # # --- PERIODICALLY UPDATE LIVE TA INDICATORS ---
-                # if TALIB_AVAILABLE and self.max_ta_period > 1:
-                #     if self.current_step % self.live_ta_recalc_interval == 0:
-                #         buffer = 26 
-                #         recalc_start_idx = max(0, kline_idx - (self.max_ta_period + buffer) + 1)
+                # --- PERIODICALLY UPDATE LIVE TA INDICATORS ---
+                if TALIB_AVAILABLE and self.max_ta_period > 1:
+                    if self.current_step % self.live_ta_recalc_interval == 0:
+                        buffer = 26 
+                        recalc_start_idx = max(0, kline_idx - (self.max_ta_period + buffer) + 1)
                         
-                #         live_recalc_window_df = self.raw_kline_df.iloc[recalc_start_idx:kline_idx + 1].copy()
-                #         live_recalc_window_df.iloc[-1, live_recalc_window_df.columns.get_loc('Close')] = current_tick_price
+                        live_recalc_window_df = self.raw_kline_df.iloc[recalc_start_idx:kline_idx + 1].copy()
+                        live_recalc_window_df.iloc[-1, live_recalc_window_df.columns.get_loc('Close')] = current_tick_price
 
-                #         live_ta_values_df = calculate_technical_indicators(
-                #             live_recalc_window_df, self.config["kline_price_features"]
-                #         )
-                #         self.last_live_ta_values = live_ta_values_df.iloc[-1].to_dict()
+                        live_ta_values_df = calculate_technical_indicators(
+                            live_recalc_window_df, self.config["kline_price_features"]
+                        )
+                        self.last_live_ta_values = live_ta_values_df.iloc[-1].to_dict()
 
-                #     # Always inject the most recently calculated live TA values
-                #     for name, value in self.last_live_ta_values.items():
-                #         if name in window_features:
-                #             window_features[name][-1] = value
+                    # Always inject the most recently calculated live TA values
+                    for name, value in self.last_live_ta_values.items():
+                        if name in window_features:
+                            window_features[name][-1] = value
 
                 kline_features_list = []
                 for name in self.config["kline_price_features"]:
