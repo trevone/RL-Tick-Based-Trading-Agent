@@ -7,7 +7,7 @@ binance_settings:
 
 run_settings:
   log_level: "normal"
-  model_name: "simple_sequence_env"
+  model_name: "profit_driven_env"
   # Set to false if you want to start a completely new model training session
   continue_from_existing_model: true
   default_symbol: "BTCUSDT"
@@ -20,7 +20,7 @@ run_settings:
   stop_training_patience_evals: 5
 
 environment:
-  env_type: "simple_sequence_env"
+  env_type: "profit_driven_env"
   # --- Parameters for the HybridRewardEnv ---
   reward_at_entry: 1.0  # The maximum reward for holding at the entry price
   decay_rate: 0.1       # Controls how quickly the hold reward decreases
@@ -28,42 +28,74 @@ environment:
 
 
   # --- General Environment Parameters ---
-  kline_window_size: 50
+  kline_window_size: 70
   kline_price_features:
     Open: {}
     High: {}
     Low: {}
     Close: {}
     Volume: {}
-    EMA_High_10:
-      function: "EMA"
+    STOCH_SlowK:
+      function: "STOCH"
       params:
-        timeperiod: 3
-      data_source: "High"
-    EMA_Low_10:
-      function: "EMA"
-      params:
-        timeperiod: 3
-      data_source: "Low"
+        fastk_period: 5
+        slowk_period: 3
+        slowk_matype: 0
+        slowd_period: 3
+        slowd_matype: 0
+      output_field: 0
 
-  tick_feature_window_size: 15
-  live_ta_recalc_every_n_steps: 1
+    STOCH_SlowD:
+      function: "STOCH"
+      params:
+        fastk_period: 5
+        slowk_period: 3
+        slowk_matype: 0
+        slowd_period: 3
+        slowd_matype: 0
+      output_field: 1
+    MACD_Line:
+      function: "MACD"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      output_field: 0
+
+    MACD_Signal:
+      function: "MACD"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      output_field: 1
+
+    MACD_Hist:
+      function: "MACD"
+      params:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      output_field: 2
+
+  tick_feature_window_size: 50
+  live_ta_recalc_every_n_steps: 15
  
   
   tick_resample_interval_ms: 60000
 
 ppo_params:
-  total_timesteps: 10000000
+  total_timesteps: 1000000
   learning_rate: 0.0003
-  n_steps: 4096
-  batch_size: 128
+  n_steps: 2048
+  batch_size: 64
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
   # --- NEW: INCREASED EXPLORATION ---
   # Forces the agent to try new things and break out of the cowardly loop.
-  ent_coef: 0.01
+  ent_coef: 0.03
   vf_coef: 0.5
   max_grad_norm: 0.5
   target_kl: 0.02
